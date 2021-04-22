@@ -28,13 +28,16 @@ Purpose:
 
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-use std::sync::mpsc::{
-    self,
-    SendError
-};
+use std::sync::mpsc::{self, SendError};
 use std::thread;
 
 use once_cell::sync::OnceCell;
+
+///////////////////////////////////////////////////////////////////////////////
+//  Named Constants
+///////////////////////////////////////////////////////////////////////////////
+
+// Buffer size of the sync_channel for sending log messages
 const CHANNEL_SIZE: usize = 512;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -46,7 +49,6 @@ use self::log_sender::LogSender;
 pub mod log_receiver;
 use self::log_receiver::LogReceiver;
 
-
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
 ///////////////////////////////////////////////////////////////////////////////
@@ -54,28 +56,28 @@ use self::log_receiver::LogReceiver;
 /// Denotes the level or severity of the log message.
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum FilterLevel {
-    Trace   = 0x01,
-    Debug   = 0x02,
-    Info    = 0x04,
+    Trace = 0x01,
+    Debug = 0x02,
+    Info = 0x04,
     Warning = 0x08,
-    Error   = 0x10,
-    Fatal   = 0x20,
+    Error = 0x10,
+    Fatal = 0x20,
 }
 
 /// Tuple struct containing log message and its log level
 pub struct MsgTuple {
-    pub level:      FilterLevel,
-    pub fn_name:    String,
-    pub line:       u32,
-    pub msg:        String,
+    pub level: FilterLevel,
+    pub fn_name: String,
+    pub line: u32,
+    pub msg: String,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub enum OutputType {
     Neither = 0x0,
     Console = 0x1,
-    File    = 0x2,
-    Both    = 0x3,
+    File = 0x2,
+    Both = 0x3,
 }
 
 pub enum Command {
@@ -86,12 +88,11 @@ pub enum Command {
 
 #[derive(Clone, Debug)]
 pub struct Instance {
-    enabled:    bool,
-    sender:     LogSender,
+    enabled: bool,
+    sender: LogSender,
 }
 
 pub static INSTANCE: OnceCell<Instance> = OnceCell::new();
-
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
@@ -102,8 +103,12 @@ impl Instance {
     pub fn new(filter: FilterLevel, output_type: OutputType) -> Self {
         let logger_instance = Self::default();
 
-        logger_instance.log_cmd(Command::SetOutput(output_type)).unwrap();
-        logger_instance.log_cmd(Command::SetFilterLevel(filter)).unwrap();
+        logger_instance
+            .log_cmd(Command::SetOutput(output_type))
+            .unwrap();
+        logger_instance
+            .log_cmd(Command::SetFilterLevel(filter))
+            .unwrap();
 
         logger_instance
     }
@@ -116,8 +121,8 @@ impl Instance {
         let dummy_sender = LogSender::new(dummy_tx);
 
         Self {
-            enabled:    false,
-            sender:     dummy_sender,
+            enabled: false,
+            sender: dummy_sender,
         }
     }
 
@@ -125,17 +130,18 @@ impl Instance {
         INSTANCE.get().expect("Logger not initialized")
     }
 
-
     /*  *  *  *  *  *  *  *\
      *  Utility Methods   *
     \*  *  *  *  *  *  *  */
 
     //FEAT: Bring filtering back to the sending-side
-    pub fn log_msg(&self,
-                   level: FilterLevel,
-                   fn_name: String,
-                   line: u32,
-                   msg: String) -> Result<(), SendError<Command>> {
+    pub fn log_msg(
+        &self,
+        level: FilterLevel,
+        fn_name: String,
+        line: u32,
+        msg: String,
+    ) -> Result<(), SendError<Command>> {
         // If logging is enabled, package log message into tuple and send
         if self.enabled {
             let log_tuple = MsgTuple {
@@ -153,13 +159,11 @@ impl Instance {
     pub fn log_cmd(&self, cmd: Command) -> Result<(), SendError<Command>> {
         if self.enabled {
             self.sender.send_cmd(cmd)
-        }
-        else {
+        } else {
             Ok(())
         }
     }
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Trait Implementations
@@ -185,12 +189,11 @@ impl Default for Instance {
         let log_sender = LogSender::new(logger_tx);
 
         Self {
-            enabled:    true,
-            sender:     log_sender,
+            enabled: true,
+            sender: log_sender,
         }
     }
 }
-
 
 /*  *  *  *  *  *  *  *\
  *     FilterLevel    *
@@ -198,16 +201,15 @@ impl Default for Instance {
 impl From<FilterLevel> for String {
     fn from(src: FilterLevel) -> Self {
         match src {
-            FilterLevel::Trace     => "TRACE".to_owned(),
-            FilterLevel::Debug     => "DEBUG".to_owned(),
-            FilterLevel::Info      => "INFO".to_owned(),
-            FilterLevel::Warning   => "WARNING".to_owned(),
-            FilterLevel::Error     => "ERROR".to_owned(),
-            FilterLevel::Fatal     => "FATAL".to_owned(),
+            FilterLevel::Trace => "TRACE".to_owned(),
+            FilterLevel::Debug => "DEBUG".to_owned(),
+            FilterLevel::Info => "INFO".to_owned(),
+            FilterLevel::Warning => "WARNING".to_owned(),
+            FilterLevel::Error => "ERROR".to_owned(),
+            FilterLevel::Fatal => "FATAL".to_owned(),
         }
     }
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Macro Definitions
@@ -232,28 +234,15 @@ macro_rules! ci_log {
     };
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 //  Unit Tests
 ///////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        error::Error,
-        fmt,
-        thread,
-        time,
-    };
+    use std::{error::Error, fmt, thread, time};
 
-    use crate::{
-        INSTANCE,
-        FilterLevel,
-        Instance,
-        OutputType,
-        Command,
-    };
-
+    use crate::{Command, FilterLevel, Instance, OutputType, INSTANCE};
 
     type TestResult = Result<(), Box<dyn Error>>;
 
@@ -275,12 +264,12 @@ mod tests {
             Instance::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
         })?;
 
-        ci_log!(FilterLevel::Trace,   "This is a TRACE message.");
-        ci_log!(FilterLevel::Debug,   "This is a DEBUG message.");
-        ci_log!(FilterLevel::Info,    "This is an INFO message.");
+        ci_log!(FilterLevel::Trace, "This is a TRACE message.");
+        ci_log!(FilterLevel::Debug, "This is a DEBUG message.");
+        ci_log!(FilterLevel::Info, "This is an INFO message.");
         ci_log!(FilterLevel::Warning, "This is a WARNING message.");
-        ci_log!(FilterLevel::Error,   "This is an ERROR message.");
-        ci_log!(FilterLevel::Fatal,   "This is a FATAL message.");
+        ci_log!(FilterLevel::Error, "This is an ERROR message.");
+        ci_log!(FilterLevel::Fatal, "This is a FATAL message.");
 
         // Sleep for 5 seconds to allow the receiver thread to do stuff
         println!("Sleeping for 5s...");
@@ -299,21 +288,96 @@ mod tests {
             Instance::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
         })?;
 
-        ci_log!(FilterLevel::Trace, "This message appears in BOTH console and file.");
-        ci_log!(FilterLevel::Fatal, "This message appears in BOTH console and file.");
+        ci_log!(
+            FilterLevel::Trace,
+            "This message appears in BOTH console and file."
+        );
+        ci_log!(
+            FilterLevel::Fatal,
+            "This message appears in BOTH console and file."
+        );
 
         // Log messages to CONSOLE only
-        Instance::global().log_cmd(Command::SetOutput(OutputType::Console)).unwrap();
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Console))
+            .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in CONSOLE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in CONSOLE ONLY.");
 
         // Log messages to FILE only
-        Instance::global().log_cmd(Command::SetOutput(OutputType::File)).unwrap();
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::File))
+            .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global().log_cmd(Command::SetOutput(OutputType::Neither)).unwrap();
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
+        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+
+        // Log messages to NEITHER output
+        Instance::global()
+            .log_cmd(Command::SetOutput(OutputType::Neither))
+            .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in NEITHER ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in NEITHER ONLY.");
 

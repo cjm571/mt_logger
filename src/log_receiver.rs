@@ -23,17 +23,12 @@ Purpose:
 use std::sync::mpsc;
 
 use std::fs;
-use std::path::PathBuf;
 use std::io::prelude::*;
+use std::path::PathBuf;
 
 use chrono::Local;
 
-use crate::{
-    Command,
-    FilterLevel,
-    OutputType,
-};
-
+use crate::{Command, FilterLevel, OutputType};
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Named Constants
@@ -45,17 +40,15 @@ const LEVEL_LABEL_WIDTH: usize = 9;
 /// Padding to the left of the log message
 const MESSAGE_LEFT_PADDING: usize = 3;
 
-
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
 ///////////////////////////////////////////////////////////////////////////////
 
 pub struct LogReceiver {
-    logger_rx:    mpsc::Receiver<Command>,
+    logger_rx: mpsc::Receiver<Command>,
     filter_level: FilterLevel,
-    output_type:  OutputType,
+    output_type: OutputType,
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
@@ -63,10 +56,17 @@ pub struct LogReceiver {
 
 impl LogReceiver {
     /// Fully-qualified constructor
-    pub fn new(logger_rx: mpsc::Receiver<Command>, filter_level: FilterLevel, output_type: OutputType) -> Self {
-        Self {logger_rx, filter_level, output_type}
+    pub fn new(
+        logger_rx: mpsc::Receiver<Command>,
+        filter_level: FilterLevel,
+        output_type: OutputType,
+    ) -> Self {
+        Self {
+            logger_rx,
+            filter_level,
+            output_type,
+        }
     }
-
 
     /*  *  *  *  *  *  *\
      * Utility Methods *
@@ -75,11 +75,17 @@ impl LogReceiver {
     /// Main loop for receiving logger commands
     pub fn main(&mut self) {
         let start_time = Local::now();
-        println!("{}: Entered LogReceiver thread.", start_time.format("%Y-%m-%d %T%.3f"));
+        println!(
+            "{}: Entered LogReceiver thread.",
+            start_time.format("%Y-%m-%d %T%.3f")
+        );
 
         // Open a logfile, creating logs directory if necessary
         let logfile_dir = "logs";
-        let logfile_name = format!("sandcasting_log_{}.log", start_time.format("%F_%H_%M_%S%.3f"));
+        let logfile_name = format!(
+            "sandcasting_log_{}.log",
+            start_time.format("%F_%H_%M_%S%.3f")
+        );
 
         let mut path_buf = PathBuf::from(logfile_dir);
         if !path_buf.as_path().exists() {
@@ -92,7 +98,11 @@ impl LogReceiver {
         path_buf.push(logfile_name);
         let mut logfile = match fs::File::create(path_buf.as_path()) {
             Ok(file) => file,
-            Err(err) => panic!("Failed to open logfile at {}. Error: {}", path_buf.as_path().display(), err),
+            Err(err) => panic!(
+                "Failed to open logfile at {}. Error: {}",
+                path_buf.as_path().display(),
+                err
+            ),
         };
 
         loop {
@@ -108,12 +118,12 @@ impl LogReceiver {
                             // Console output
                             if self.output_type as u8 & OutputType::Console as u8 != 0 {
                                 let log_color = match log_tuple.level {
-                                    FilterLevel::Trace     => "\x1b[030;105m",
-                                    FilterLevel::Debug     => "\x1b[030;106m",
-                                    FilterLevel::Info      => "\x1b[030;107m",
-                                    FilterLevel::Warning   => "\x1b[030;103m",
-                                    FilterLevel::Error     => "\x1b[030;101m",
-                                    FilterLevel::Fatal     => "\x1b[031;040m",
+                                    FilterLevel::Trace => "\x1b[030;105m",
+                                    FilterLevel::Debug => "\x1b[030;106m",
+                                    FilterLevel::Info => "\x1b[030;107m",
+                                    FilterLevel::Warning => "\x1b[030;103m",
+                                    FilterLevel::Error => "\x1b[030;101m",
+                                    FilterLevel::Fatal => "\x1b[031;040m",
                                 };
                                 println!(
                                     "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
@@ -143,7 +153,7 @@ impl LogReceiver {
                                 logfile.write_all(msg_formatted.as_bytes()).unwrap();
                             }
                         }
-                    },
+                    }
 
                     /* Configuration Commands */
                     Command::SetFilterLevel(filter_level) => {
@@ -151,7 +161,7 @@ impl LogReceiver {
                     }
                     Command::SetOutput(output_type) => {
                         self.output_type = output_type;
-                    },
+                    }
                 };
             }
         }

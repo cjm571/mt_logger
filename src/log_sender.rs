@@ -23,10 +23,7 @@ Purpose:
 
 use std::sync::mpsc;
 
-use crate::{
-    Command
-};
-
+use crate::Command;
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
@@ -37,7 +34,6 @@ pub struct LogSender {
     logger_tx: mpsc::SyncSender<Command>,
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
 ///////////////////////////////////////////////////////////////////////////////
@@ -45,9 +41,8 @@ pub struct LogSender {
 impl LogSender {
     /// Fully-qualified constructor
     pub fn new(logger_tx: mpsc::SyncSender<Command>) -> Self {
-        Self {logger_tx}
+        Self { logger_tx }
     }
-
 
     /*  *  *  *  *  *  *  *\
      *  Utility Methods   *
