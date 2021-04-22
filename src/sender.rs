@@ -30,7 +30,7 @@ use crate::Command;
 ///////////////////////////////////////////////////////////////////////////////
 
 #[derive(Clone, Debug)]
-pub struct LogSender {
+pub struct Sender {
     logger_tx: mpsc::SyncSender<Command>,
 }
 
@@ -38,7 +38,7 @@ pub struct LogSender {
 //  Object Implementation
 ///////////////////////////////////////////////////////////////////////////////
 
-impl LogSender {
+impl Sender {
     /// Fully-qualified constructor
     pub fn new(logger_tx: mpsc::SyncSender<Command>) -> Self {
         Self { logger_tx }

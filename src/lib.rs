@@ -1,7 +1,7 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *\
-Filename : logger/mod.rs
+Filename : lib.rs
 
-Copyright (C) 2020 CJ McAllister
+Copyright (C) 2021 CJ McAllister
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 3 of the License, or
@@ -15,16 +15,10 @@ Copyright (C) 2020 CJ McAllister
     Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 Purpose:
-    This module will provide data structures and functions that provide
-    1st-party logging functionality for game events.
+    This library provides a multi-threaded, global logger.
 
-!!!USAGE NOTE!!!
-    This module is meant to be created once in a top level, and then cloned
-    in each submodule's constructors from a reference to the original.
-
-    Due to the nature of Rusts' "multiple producer, single consumer" model
-    of inter-thread communication, all clones will send their messages to
-    the single receiver spawned by the original Instance.
+    All logging actions occur in the logging thread, leaving the main thread
+    free to do all the cool stuff it wants to do!
 
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -33,6 +27,7 @@ use std::thread;
 
 use once_cell::sync::OnceCell;
 
+
 ///////////////////////////////////////////////////////////////////////////////
 //  Named Constants
 ///////////////////////////////////////////////////////////////////////////////
@@ -40,14 +35,16 @@ use once_cell::sync::OnceCell;
 // Buffer size of the sync_channel for sending log messages
 const CHANNEL_SIZE: usize = 512;
 
+
 ///////////////////////////////////////////////////////////////////////////////
 //  Module Declarations
 ///////////////////////////////////////////////////////////////////////////////
 
 pub mod sender;
-use self::sender::LogSender;
+use self::sender::Sender;
 pub mod receiver;
-use self::receiver::LogReceiver;
+use self::receiver::Receiver;
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
@@ -87,18 +84,19 @@ pub enum Command {
 }
 
 #[derive(Clone, Debug)]
-pub struct Instance {
+pub struct MtLogger {
     enabled: bool,
-    sender: LogSender,
+    sender: Sender,
 }
 
-pub static INSTANCE: OnceCell<Instance> = OnceCell::new();
+pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
 ///////////////////////////////////////////////////////////////////////////////
 
-impl Instance {
+impl MtLogger {
     /// Fully-qualified constructor
     pub fn new(filter: FilterLevel, output_type: OutputType) -> Self {
         let logger_instance = Self::default();
@@ -118,7 +116,7 @@ impl Instance {
         let (dummy_tx, _dummy_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
         // Initialize dummy sender struct
-        let dummy_sender = LogSender::new(dummy_tx);
+        let dummy_sender = Sender::new(dummy_tx);
 
         Self {
             enabled: false,
@@ -165,28 +163,29 @@ impl Instance {
     }
 }
 
+
 ///////////////////////////////////////////////////////////////////////////////
 //  Trait Implementations
 ///////////////////////////////////////////////////////////////////////////////
 
 /*  *  *  *  *  *  *  *\
- *      Instance      *
+ *      MtLogger      *
 \*  *  *  *  *  *  *  */
-impl Default for Instance {
+impl Default for MtLogger {
     fn default() -> Self {
         // Create the log messaging and control channel
         let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
         //OPT: *PERFORMANCE* Would be better to set the receiver thread's priority as low as possible
         // Initialize receiver struct, build and spawn thread
-        let mut log_receiver = LogReceiver::new(logger_rx, FilterLevel::Info, OutputType::Both);
+        let mut log_receiver = Receiver::new(logger_rx, FilterLevel::Info, OutputType::Both);
         thread::Builder::new()
             .name("log_receiver".to_owned())
             .spawn(move || log_receiver.main())
             .unwrap();
 
         // Initialize sender struct
-        let log_sender = LogSender::new(logger_tx);
+        let log_sender = Sender::new(logger_tx);
 
         Self {
             enabled: true,
@@ -194,6 +193,7 @@ impl Default for Instance {
         }
     }
 }
+
 
 /*  *  *  *  *  *  *  *\
  *     FilterLevel    *
@@ -210,6 +210,7 @@ impl From<FilterLevel> for String {
         }
     }
 }
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Macro Definitions
@@ -231,11 +232,12 @@ macro_rules! ci_log {
 
         let msg_content: String = format!($( $fmt_args ),*);
 
-        $crate::Instance::global().log_msg($log_level, fn_name.to_owned(), line!(), msg_content).unwrap();
+        $crate::MtLogger::global().log_msg($log_level, fn_name.to_owned(), line!(), msg_content).unwrap();
     };
 }
 
 //TODO: Add macros for setting output, filter
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Unit Tests
@@ -245,7 +247,8 @@ macro_rules! ci_log {
 mod tests {
     use std::{error::Error, fmt, thread, time};
 
-    use crate::{Command, FilterLevel, Instance, OutputType, INSTANCE};
+    use crate::{Command, FilterLevel, MtLogger, OutputType, INSTANCE};
+
 
     type TestResult = Result<(), Box<dyn Error>>;
 
@@ -257,14 +260,15 @@ mod tests {
             write!(f, "{:?}", self)
         }
     }
+    
 
     #[test]
     fn visual_verification() -> TestResult {
         // Create or update a logger instance that will log all messages to Both outputs
-        let logger = Instance::new(FilterLevel::Trace, OutputType::Both);
+        let logger = MtLogger::new(FilterLevel::Trace, OutputType::Both);
         INSTANCE.set(logger).or_else(|_| {
-            Instance::global().log_cmd(Command::SetOutput(OutputType::Both))?;
-            Instance::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
+            MtLogger::global().log_cmd(Command::SetOutput(OutputType::Both))?;
+            MtLogger::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
         })?;
 
         ci_log!(FilterLevel::Trace, "This is a TRACE message.");
@@ -285,10 +289,10 @@ mod tests {
     #[test]
     fn output_type_cmd_test() -> TestResult {
         // Create or update a logger instance that will log messages to BOTH outputs
-        let logger = Instance::new(FilterLevel::Trace, OutputType::Both);
+        let logger = MtLogger::new(FilterLevel::Trace, OutputType::Both);
         INSTANCE.set(logger).or_else(|_| {
-            Instance::global().log_cmd(Command::SetOutput(OutputType::Both))?;
-            Instance::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
+            MtLogger::global().log_cmd(Command::SetOutput(OutputType::Both))?;
+            MtLogger::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
         })?;
 
         ci_log!(
@@ -301,84 +305,84 @@ mod tests {
         );
 
         // Log messages to CONSOLE only
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Console))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in CONSOLE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in CONSOLE ONLY.");
 
         // Log messages to FILE only
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::File))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
 
         // Log messages to NEITHER output
-        Instance::global()
+        MtLogger::global()
             .log_cmd(Command::SetOutput(OutputType::Neither))
             .unwrap();
         ci_log!(FilterLevel::Trace, "This message appears in NEITHER ONLY.");

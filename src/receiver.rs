@@ -44,7 +44,7 @@ const MESSAGE_LEFT_PADDING: usize = 3;
 //  Data Structures
 ///////////////////////////////////////////////////////////////////////////////
 
-pub struct LogReceiver {
+pub struct Receiver {
     logger_rx: mpsc::Receiver<Command>,
     filter_level: FilterLevel,
     output_type: OutputType,
@@ -54,7 +54,7 @@ pub struct LogReceiver {
 //  Object Implementation
 ///////////////////////////////////////////////////////////////////////////////
 
-impl LogReceiver {
+impl Receiver {
     /// Fully-qualified constructor
     pub fn new(
         logger_rx: mpsc::Receiver<Command>,
