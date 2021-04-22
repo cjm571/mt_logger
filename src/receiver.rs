@@ -129,7 +129,7 @@ impl Receiver {
                                     "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
                                     timestamp   = timestamp,
                                     color_set   = log_color,
-                                    level       = String::from(log_tuple.level),
+                                    level       = log_tuple.level.to_string(),
                                     level_width = LEVEL_LABEL_WIDTH,
                                     fn_name     = log_tuple.fn_name,
                                     line        = log_tuple.line,
@@ -143,7 +143,7 @@ impl Receiver {
                                 let msg_formatted = format!(
                                     "{timestamp}: [{level:^level_width$}] {fn_name}() line {line}:\n{msg:>msg_leftpad$}\n",
                                     timestamp   = timestamp,
-                                    level       = String::from(log_tuple.level),
+                                    level       = log_tuple.level.to_string(),
                                     level_width = LEVEL_LABEL_WIDTH,
                                     fn_name     = log_tuple.fn_name,
                                     line        = log_tuple.line,

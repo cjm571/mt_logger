@@ -22,6 +22,7 @@ Purpose:
 
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+use std::fmt;
 use std::sync::mpsc::{self, SendError};
 use std::thread;
 
@@ -180,7 +181,7 @@ impl Default for MtLogger {
         // Initialize receiver struct, build and spawn thread
         let mut log_receiver = Receiver::new(logger_rx, FilterLevel::Info, OutputType::Both);
         thread::Builder::new()
-            .name("log_receiver".to_owned())
+            .name("log_receiver".to_string())
             .spawn(move || log_receiver.main())
             .unwrap();
 
@@ -198,15 +199,15 @@ impl Default for MtLogger {
 /*  *  *  *  *  *  *  *\
  *     FilterLevel    *
 \*  *  *  *  *  *  *  */
-impl From<FilterLevel> for String {
-    fn from(src: FilterLevel) -> Self {
-        match src {
-            FilterLevel::Trace => "TRACE".to_owned(),
-            FilterLevel::Debug => "DEBUG".to_owned(),
-            FilterLevel::Info => "INFO".to_owned(),
-            FilterLevel::Warning => "WARNING".to_owned(),
-            FilterLevel::Error => "ERROR".to_owned(),
-            FilterLevel::Fatal => "FATAL".to_owned(),
+impl fmt::Display for FilterLevel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FilterLevel::Trace => write!(f, "TRACE"),
+            FilterLevel::Debug => write!(f, "DEBUG"),
+            FilterLevel::Info => write!(f, "INFO"),
+            FilterLevel::Warning => write!(f, "WARNING"),
+            FilterLevel::Error => write!(f, "ERROR"),
+            FilterLevel::Fatal => write!(f, "FATAL"),
         }
     }
 }
@@ -232,7 +233,7 @@ macro_rules! ci_log {
 
         let msg_content: String = format!($( $fmt_args ),*);
 
-        $crate::MtLogger::global().log_msg($log_level, fn_name.to_owned(), line!(), msg_content).unwrap();
+        $crate::MtLogger::global().log_msg($log_level, fn_name.to_string(), line!(), msg_content).unwrap();
     };
 }
 
