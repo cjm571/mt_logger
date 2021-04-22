@@ -52,6 +52,7 @@ const MESSAGE_LEFT_PADDING: usize = 3;
 
 pub struct LogReceiver {
     logger_rx:    mpsc::Receiver<Command>,
+    filter_level: FilterLevel,
     output_type:  OutputType,
 }
 
@@ -62,8 +63,8 @@ pub struct LogReceiver {
 
 impl LogReceiver {
     /// Fully-qualified constructor
-    pub fn new(logger_rx: mpsc::Receiver<Command>, output_type: OutputType) -> Self {
-        Self {logger_rx, output_type}
+    pub fn new(logger_rx: mpsc::Receiver<Command>, filter_level: FilterLevel, output_type: OutputType) -> Self {
+        Self {logger_rx, filter_level, output_type}
     }
 
 
@@ -101,47 +102,53 @@ impl LogReceiver {
 
                 // Handle command based on type
                 match logger_cmd {
-                    // Log a message
+                    /* Messages */
                     Command::LogMsg(log_tuple) => {
-                        // Console output
-                        if self.output_type as u8 & OutputType::Console as u8 != 0 {
-                            let log_color = match log_tuple.level {
-                                FilterLevel::Trace     => "\x1b[030;105m",
-                                FilterLevel::Debug     => "\x1b[030;106m",
-                                FilterLevel::Info      => "\x1b[030;107m",
-                                FilterLevel::Warning   => "\x1b[030;103m",
-                                FilterLevel::Error     => "\x1b[030;101m",
-                                FilterLevel::Fatal     => "\x1b[031;040m",
-                            };
-                            println!(
-                                "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
-                                timestamp   = timestamp,
-                                color_set   = log_color,
-                                level       = String::from(log_tuple.level),
-                                level_width = LEVEL_LABEL_WIDTH,
-                                fn_name     = log_tuple.fn_name,
-                                line        = log_tuple.line,
-                                msg         = log_tuple.msg,
-                                msg_leftpad = MESSAGE_LEFT_PADDING + log_tuple.msg.len(),
-                            );
-                        }
+                        if log_tuple.level >= self.filter_level {
+                            // Console output
+                            if self.output_type as u8 & OutputType::Console as u8 != 0 {
+                                let log_color = match log_tuple.level {
+                                    FilterLevel::Trace     => "\x1b[030;105m",
+                                    FilterLevel::Debug     => "\x1b[030;106m",
+                                    FilterLevel::Info      => "\x1b[030;107m",
+                                    FilterLevel::Warning   => "\x1b[030;103m",
+                                    FilterLevel::Error     => "\x1b[030;101m",
+                                    FilterLevel::Fatal     => "\x1b[031;040m",
+                                };
+                                println!(
+                                    "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
+                                    timestamp   = timestamp,
+                                    color_set   = log_color,
+                                    level       = String::from(log_tuple.level),
+                                    level_width = LEVEL_LABEL_WIDTH,
+                                    fn_name     = log_tuple.fn_name,
+                                    line        = log_tuple.line,
+                                    msg         = log_tuple.msg,
+                                    msg_leftpad = MESSAGE_LEFT_PADDING + log_tuple.msg.len(),
+                                );
+                            }
 
-                        // File output
-                        if self.output_type as u8 & OutputType::File as u8 != 0 {
-                            let msg_formatted = format!(
-                                "{timestamp}: [{level:^level_width$}] {fn_name}() line {line}:\n{msg:>msg_leftpad$}\n",
-                                timestamp   = timestamp,
-                                level       = String::from(log_tuple.level),
-                                level_width = LEVEL_LABEL_WIDTH,
-                                fn_name     = log_tuple.fn_name,
-                                line        = log_tuple.line,
-                                msg         = log_tuple.msg,
-                                msg_leftpad = MESSAGE_LEFT_PADDING + log_tuple.msg.len(),
-                            );
-                            logfile.write_all(msg_formatted.as_bytes()).unwrap();
+                            // File output
+                            if self.output_type as u8 & OutputType::File as u8 != 0 {
+                                let msg_formatted = format!(
+                                    "{timestamp}: [{level:^level_width$}] {fn_name}() line {line}:\n{msg:>msg_leftpad$}\n",
+                                    timestamp   = timestamp,
+                                    level       = String::from(log_tuple.level),
+                                    level_width = LEVEL_LABEL_WIDTH,
+                                    fn_name     = log_tuple.fn_name,
+                                    line        = log_tuple.line,
+                                    msg         = log_tuple.msg,
+                                    msg_leftpad = MESSAGE_LEFT_PADDING + log_tuple.msg.len(),
+                                );
+                                logfile.write_all(msg_formatted.as_bytes()).unwrap();
+                            }
                         }
                     },
 
+                    /* Configuration Commands */
+                    Command::SetFilterLevel(filter_level) => {
+                        self.filter_level = filter_level;
+                    }
                     Command::SetOutput(output_type) => {
                         self.output_type = output_type;
                     },

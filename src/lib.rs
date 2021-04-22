@@ -52,7 +52,7 @@ use self::log_receiver::LogReceiver;
 ///////////////////////////////////////////////////////////////////////////////
 
 /// Denotes the level or severity of the log message.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum FilterLevel {
     Trace   = 0x01,
     Debug   = 0x02,
@@ -80,22 +80,18 @@ pub enum OutputType {
 
 pub enum Command {
     LogMsg(MsgTuple),
-    SetOutput(OutputType)
+    SetFilterLevel(FilterLevel),
+    SetOutput(OutputType),
 }
 
 #[derive(Clone, Debug)]
 pub struct Instance {
     enabled:    bool,
     sender:     LogSender,
-    filter:     u8
 }
 
-
-#[cfg(test)]
-pub static mut INSTANCE: OnceCell<Instance> = OnceCell::new();
-
-#[cfg(not(test))]
 pub static INSTANCE: OnceCell<Instance> = OnceCell::new();
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
@@ -103,25 +99,16 @@ pub static INSTANCE: OnceCell<Instance> = OnceCell::new();
 
 impl Instance {
     /// Fully-qualified constructor
-    pub fn new(filter: u8, output_type: OutputType) -> Self {
-        let mut logger_instance = Self::default();
-        logger_instance.set_filter(filter);
+    pub fn new(filter: FilterLevel, output_type: OutputType) -> Self {
+        let logger_instance = Self::default();
 
         logger_instance.log_cmd(Command::SetOutput(output_type)).unwrap();
+        logger_instance.log_cmd(Command::SetFilterLevel(filter)).unwrap();
 
         logger_instance
     }
 
-    /// Default constructor for debugging
-    pub fn debug_default() -> Self {
-        let mut logger_instance = Self::default();
-        logger_instance.set_filter(FilterLevel::Debug as u8);
-        logger_instance.log_cmd(Command::SetOutput(OutputType::Both)).unwrap();
-
-        logger_instance
-    }
-
-    pub fn disabled() -> Self {
+    pub fn new_disabled() -> Self {
         // Create dummy channel handles
         let (dummy_tx, _dummy_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
@@ -131,45 +118,11 @@ impl Instance {
         Self {
             enabled:    false,
             sender:     dummy_sender,
-            filter:     FilterLevel::Fatal as u8,
         }
     }
 
     pub fn global() -> &'static Self {
-        #[cfg(not(test))]
-        return INSTANCE.get().expect("Logger not initialized");
-
-        #[cfg(test)]
-        unsafe{
-            return INSTANCE.get().expect("Logger not initialized");
-        }
-    }
-
-
-    /*  *  *  *  *  *  *  *\
-     *  Accessor Methods  *
-    \*  *  *  *  *  *  *  */
-
-    pub fn filter(&self) -> u8 {
-        self.filter
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-
-    /*  *  *  *  *  *  *  *\
-     *  Mutator Methods   *
-    \*  *  *  *  *  *  *  */
-
-    pub fn set_filter(&mut self, new_filter: u8) {
-        self.filter = new_filter;
-    }
-
-    /// Disables the logger instance
-    pub fn disable(&mut self) {
-        self.enabled = false;
+        INSTANCE.get().expect("Logger not initialized")
     }
 
 
@@ -177,14 +130,14 @@ impl Instance {
      *  Utility Methods   *
     \*  *  *  *  *  *  *  */
 
+    //FEAT: Bring filtering back to the sending-side
     pub fn log_msg(&self,
                    level: FilterLevel,
                    fn_name: String,
                    line: u32,
                    msg: String) -> Result<(), SendError<Command>> {
-        // Check filter and send message if it passes
-        if self.enabled && level as u8 >= self.filter {
-            // Package log message into tuple and send
+        // If logging is enabled, package log message into tuple and send
+        if self.enabled {
             let log_tuple = MsgTuple {
                 level,
                 fn_name,
@@ -222,7 +175,7 @@ impl Default for Instance {
 
         //OPT: *PERFORMANCE* Would be better to set the receiver thread's priority as low as possible
         // Initialize receiver struct, build and spawn thread
-        let mut log_receiver = LogReceiver::new(logger_rx, OutputType::Both);
+        let mut log_receiver = LogReceiver::new(logger_rx, FilterLevel::Info, OutputType::Both);
         thread::Builder::new()
             .name("log_receiver".to_owned())
             .spawn(move || log_receiver.main())
@@ -234,7 +187,6 @@ impl Default for Instance {
         Self {
             enabled:    true,
             sender:     log_sender,
-            filter:     FilterLevel::Info as u8
         }
     }
 }
@@ -316,15 +268,12 @@ mod tests {
 
     #[test]
     fn visual_verification() -> TestResult {
-        unsafe {
-            INSTANCE.take();
-        }
-
-        // Create a logger instance that will log all messages to Both outputs
-        let logger = Instance::new(FilterLevel::Trace as u8, OutputType::Both);
-        unsafe {
-            INSTANCE.set(logger).expect("INSTANCE already set!");
-        }
+        // Create or update a logger instance that will log all messages to Both outputs
+        let logger = Instance::new(FilterLevel::Trace, OutputType::Both);
+        INSTANCE.set(logger).or_else(|_| {
+            Instance::global().log_cmd(Command::SetOutput(OutputType::Both))?;
+            Instance::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
+        })?;
 
         ci_log!(FilterLevel::Trace,   "This is a TRACE message.");
         ci_log!(FilterLevel::Debug,   "This is a DEBUG message.");
@@ -343,15 +292,12 @@ mod tests {
 
     #[test]
     fn output_type_cmd_test() -> TestResult {
-        unsafe {
-            INSTANCE.take();
-        }
-
-        // Create a logger instance that will log messages to BOTH outputs
-        let logger = Instance::new(FilterLevel::Trace as u8, OutputType::Both);
-        unsafe {
-            INSTANCE.set(logger).expect("INSTANCE already set!");
-        }
+        // Create or update a logger instance that will log messages to BOTH outputs
+        let logger = Instance::new(FilterLevel::Trace, OutputType::Both);
+        INSTANCE.set(logger).or_else(|_| {
+            Instance::global().log_cmd(Command::SetOutput(OutputType::Both))?;
+            Instance::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
+        })?;
 
         ci_log!(FilterLevel::Trace, "This message appears in BOTH console and file.");
         ci_log!(FilterLevel::Fatal, "This message appears in BOTH console and file.");
