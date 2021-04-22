@@ -44,10 +44,10 @@ const CHANNEL_SIZE: usize = 512;
 //  Module Declarations
 ///////////////////////////////////////////////////////////////////////////////
 
-pub mod log_sender;
-use self::log_sender::LogSender;
-pub mod log_receiver;
-use self::log_receiver::LogReceiver;
+pub mod sender;
+use self::sender::LogSender;
+pub mod receiver;
+use self::receiver::LogReceiver;
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
@@ -216,6 +216,7 @@ impl From<FilterLevel> for String {
 ///////////////////////////////////////////////////////////////////////////////
 
 //OPT: *PERFORMANCE* Are the string type conversions expensive?
+//TODO: Rename
 #[macro_export]
 macro_rules! ci_log {
     ($log_level:expr, $( $fmt_args:expr ),*) => {
@@ -233,6 +234,8 @@ macro_rules! ci_log {
         $crate::Instance::global().log_msg($log_level, fn_name.to_owned(), line!(), msg_content).unwrap();
     };
 }
+
+//TODO: Add macros for setting output, filter
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Unit Tests
