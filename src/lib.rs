@@ -26,6 +26,9 @@ use std::fmt;
 use std::sync::mpsc::{self, SendError};
 use std::thread;
 
+extern crate lazy_static;
+extern crate regex;
+
 use once_cell::sync::OnceCell;
 
 
@@ -246,9 +249,19 @@ macro_rules! ci_log {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, fmt, thread, time};
+    use std::error::Error;
+    use std::fmt;
+    use std::fs;
+    use std::io::Read;
+    use std::sync::Mutex;
+    use std::thread;
+    use std::time;
+
+    use lazy_static::lazy_static;
+    use regex::Regex;
 
     use crate::{Command, FilterLevel, MtLogger, OutputType, INSTANCE};
+    use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
 
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -262,9 +275,84 @@ mod tests {
         }
     }
     
+    lazy_static! {
+        static ref LOGGER_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    fn format_verf_helper(header_regex: &Regex, content_regex: &Regex, filepath: &str) -> TestResult {
+        // Set up the verification items
+        const FN_NAME: &str = "mt_logger::tests::format_verification";
+        const VERF_MATRIX: [[&str; 4]; 6] = [
+            ["TRACE",   "030;105m", "  TRACE  ", "363"],
+            ["DEBUG",   "030;106m", "  DEBUG  ", "364"],
+            ["INFO",    "030;107m", "  INFO   ", "365"],
+            ["WARNING", "030;103m", " WARNING ", "366"],
+            ["ERROR",   "030;101m", "  ERROR  ", "367"],
+            ["FATAL",   "031;040m", "  FATAL  ", "368"],
+        ];
+        const NAME_IDX: usize = 0;
+        const COLOR_IDX: usize = 1;
+        const PADDED_NAME_IDX: usize = 2;
+        const LINE_NUM_IDX: usize = 3;
+
+
+        let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
+        let mut verf_string = String::new();
+        verf_file.read_to_string(&mut verf_string)?;
+
+        let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
+        let mut verf_line_iter = verf_lines.iter_mut();
+
+        // Iterate over lines, verifying along the way
+        let mut i = 0;
+        while let Some(header_line) = verf_line_iter.next().filter(|v| !v.is_empty()) {
+            // Match regex against header line, and capture groups
+            let header_captures = header_regex.captures(header_line)
+                .unwrap_or_else(|| panic!("Header line {} '{}' did not match Regex for stdout", i, header_line));
+        
+            // Set offset for file-out verification for proper indexing
+            let offset;
+            if filepath == FILE_OUT_FILENAME {
+                offset = 1;
+            } else {
+                offset = 0;
+            }
+
+            // Verify capture groups
+            if filepath == STDOUT_FILENAME && &header_captures[1] != VERF_MATRIX[i][COLOR_IDX] {
+                panic!("Wrong color on line '{}' ({}), should be '{}'", header_line, &header_captures[0], VERF_MATRIX[i][COLOR_IDX]);
+            }
+            if &header_captures[2 - offset] != VERF_MATRIX[i][PADDED_NAME_IDX] {
+                panic!("Wrong padded name on line '{}', should be '{}'", header_line, VERF_MATRIX[i][PADDED_NAME_IDX]);
+            }
+            if &header_captures[3 - offset] != FN_NAME {
+                panic!("Wrong function name on line '{}', should be '{}'", header_line, FN_NAME);
+            }
+            if &header_captures[4 - offset] != VERF_MATRIX[i][LINE_NUM_IDX] {
+                panic!("Wrong line number on line '{}', should be '{}'", header_line, VERF_MATRIX[i][LINE_NUM_IDX]);
+            }
+
+            // Verify content line
+            let content_line = verf_line_iter.next().unwrap_or_else(|| panic!("Missing content line after header '{}'", header_line));
+            let content_captures = content_regex.captures(content_line)
+                .unwrap_or_else(|| panic!("Content line {} '{}' did not match Regex for stdout", i, content_line));
+
+            if &content_captures[1] != VERF_MATRIX[i][NAME_IDX] {
+                panic!("Wrong name in content line '{}', should be '{}'", content_line, VERF_MATRIX[i][NAME_IDX])
+            }
+
+            i += 1;
+        }
+
+        Ok(())
+    }
 
     #[test]
-    fn visual_verification() -> TestResult {
+    fn format_verification() -> TestResult {
+
+        // Acquire logger mutex, will be released once the test function completes
+        let _mutex = LOGGER_MUTEX.lock()?;
+        
         // Create or update a logger instance that will log all messages to Both outputs
         let logger = MtLogger::new(FilterLevel::Trace, OutputType::Both);
         INSTANCE.set(logger).or_else(|_| {
@@ -279,16 +367,32 @@ mod tests {
         ci_log!(FilterLevel::Error, "This is an ERROR message.");
         ci_log!(FilterLevel::Fatal, "This is a FATAL message.");
 
-        // Sleep for 5 seconds to allow the receiver thread to do stuff
-        println!("Sleeping for 5s...");
-        thread::sleep(time::Duration::from_secs(5));
+        // Sleep for 1 second to allow the receiver thread to do stuff
+        println!("Sleeping for 1s...");
+        thread::sleep(time::Duration::from_secs(1));
         println!("Done sleeping!");
+
+        // Create regexes to match against expect stdout format
+        let stdout_regex = Regex::new(
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(.{9})\]\x1b\[0m (.*)\(\) line (\d*):"
+        )?;
+        let file_out_regex = Regex::new(
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \[(.{9})\] (.*)\(\) line (\d*):"
+        )?;
+        let content_regex = Regex::new(r"^   This is an? (.*) message.")?;
+
+        // Verify that the verification files contain well-formatted messages
+        format_verf_helper(&stdout_regex, &content_regex, STDOUT_FILENAME)?;
+        format_verf_helper(&file_out_regex, &content_regex, FILE_OUT_FILENAME)?;
 
         Ok(())
     }
 
     #[test]
     fn output_type_cmd_test() -> TestResult {
+        // Acquire logger mutex, will be released once the test function completes
+        let _mutex = LOGGER_MUTEX.lock()?;
+
         // Create or update a logger instance that will log messages to BOTH outputs
         let logger = MtLogger::new(FilterLevel::Trace, OutputType::Both);
         INSTANCE.set(logger).or_else(|_| {
@@ -389,9 +493,9 @@ mod tests {
         ci_log!(FilterLevel::Trace, "This message appears in NEITHER ONLY.");
         ci_log!(FilterLevel::Fatal, "This message appears in NEITHER ONLY.");
 
-        // Sleep for 5 seconds to allow the receiver thread to do stuff
-        println!("Sleeping for 5s...");
-        thread::sleep(time::Duration::from_secs(5));
+        // Sleep for 1 seconds to allow the receiver thread to do stuff
+        println!("Sleeping for 1s...");
+        thread::sleep(time::Duration::from_secs(1));
         println!("Done sleeping!");
 
         Ok(())

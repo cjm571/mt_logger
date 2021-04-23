@@ -41,6 +41,11 @@ const LEVEL_LABEL_WIDTH: usize = 9;
 /// Padding to the left of the log message
 const MESSAGE_LEFT_PADDING: usize = 3;
 
+#[cfg(test)]
+pub const STDOUT_FILENAME: &str = "logs/stdout_redirect.log";
+#[cfg(test)]
+pub const FILE_OUT_FILENAME: &str = "logs/file_out_redirect.log";
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
@@ -108,6 +113,19 @@ impl Receiver {
                 err
             ),
         };
+        
+        #[cfg(test)]
+        {
+            // Create verification files
+            fs::File::create(STDOUT_FILENAME)
+                .unwrap_or_else(
+                    |err| panic!("Encountered error '{}' while creating stdout verification file", err)
+                );
+            fs::File::create(FILE_OUT_FILENAME)
+                .unwrap_or_else(
+                    |err| panic!("Encountered error '{}' while creating file output verification file", err)
+                );
+        }
 
         loop {
             // Check the channel for commands
@@ -129,7 +147,7 @@ impl Receiver {
                                     FilterLevel::Error => "\x1b[030;101m",
                                     FilterLevel::Fatal => "\x1b[031;040m",
                                 };
-                                println!(
+                                let msg_formatted = format!(
                                     "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
                                     timestamp   = timestamp,
                                     color_set   = log_color,
@@ -140,6 +158,26 @@ impl Receiver {
                                     msg         = log_tuple.msg,
                                     msg_leftpad = MESSAGE_LEFT_PADDING + log_tuple.msg.len(),
                                 );
+
+                                // Write to console
+                                println!("{}", msg_formatted);
+
+                                #[cfg(test)]
+                                {
+                                    // Add newline to formatted message for readability
+                                    let writeable_msg = format!("{}\n", msg_formatted);
+
+                                    // Write to stdout verification file
+                                    let mut stdout_redirect = fs::OpenOptions::new().append(true).open(STDOUT_FILENAME)
+                                        .unwrap_or_else(
+                                            |err| panic!("Encountered error '{}' while attempting to open stdout verification file.", err)
+                                        );
+                                    stdout_redirect.write_all(writeable_msg.as_bytes())
+                                        .unwrap_or_else(
+                                            |err| panic!("Encountered error '{}' while attempting to write to stdout verification file.", err)
+                                        );
+                                }
+
                             }
 
                             // File output
@@ -158,8 +196,21 @@ impl Receiver {
                                 //FEAT: Avoid spewing the same error if a file explodes or something
                                 logfile.write_all(msg_formatted.as_bytes())
                                     .unwrap_or_else(
-                                        |err| eprintln!("{}: Encountered Error '{}' while attempting to write to log file.", timestamp, err)
+                                        |err| eprintln!("{}: Encountered error '{}' while attempting to write to log file.", timestamp, err)
                                     );
+                                
+                                #[cfg(test)]
+                                {
+                                    // Write to stdout verification file
+                                    let mut file_redirect = fs::OpenOptions::new().append(true).open(FILE_OUT_FILENAME)
+                                        .unwrap_or_else(
+                                            |err| panic!("Encountered error '{}' while attempting to open file output verification file.", err)
+                                        );
+                                    file_redirect.write_all(msg_formatted.as_bytes())
+                                        .unwrap_or_else(
+                                            |err| panic!("Encountered error '{}' while attempting to write to file output verification file.", err)
+                                        )
+                                }
                             }
                         }
                     }
