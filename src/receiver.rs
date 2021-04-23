@@ -30,6 +30,7 @@ use chrono::Local;
 
 use crate::{Command, FilterLevel, OutputType};
 
+
 ///////////////////////////////////////////////////////////////////////////////
 //  Named Constants
 ///////////////////////////////////////////////////////////////////////////////
@@ -40,6 +41,7 @@ const LEVEL_LABEL_WIDTH: usize = 9;
 /// Padding to the left of the log message
 const MESSAGE_LEFT_PADDING: usize = 3;
 
+
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
 ///////////////////////////////////////////////////////////////////////////////
@@ -49,6 +51,7 @@ pub struct Receiver {
     filter_level: FilterLevel,
     output_type: OutputType,
 }
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
@@ -68,6 +71,7 @@ impl Receiver {
         }
     }
 
+    
     /*  *  *  *  *  *  *\
      * Utility Methods *
     \*  *  *  *  *  *  */
@@ -150,7 +154,12 @@ impl Receiver {
                                     msg         = log_tuple.msg,
                                     msg_leftpad = MESSAGE_LEFT_PADDING + log_tuple.msg.len(),
                                 );
-                                logfile.write_all(msg_formatted.as_bytes()).unwrap();
+
+                                //FEAT: Avoid spewing the same error if a file explodes or something
+                                logfile.write_all(msg_formatted.as_bytes())
+                                    .unwrap_or_else(
+                                        |err| eprintln!("{}: Encountered Error '{}' while attempting to write to log file.", timestamp, err)
+                                    );
                             }
                         }
                     }
