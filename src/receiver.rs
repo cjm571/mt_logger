@@ -91,6 +91,7 @@ impl Receiver {
 
         // Open a logfile, creating logs directory if necessary
         let logfile_dir = "logs";
+        //TODO: Genericize this
         let logfile_name = format!(
             "sandcasting_log_{}.log",
             start_time.format("%F_%H_%M_%S%.3f")
