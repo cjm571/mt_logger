@@ -279,23 +279,69 @@ mod tests {
         static ref LOGGER_MUTEX: Mutex<()> = Mutex::new(());
     }
 
-    fn format_verf_helper(header_regex: &Regex, content_regex: &Regex, filepath: &str) -> TestResult {
+    #[derive(Debug, PartialEq)]
+    enum VerfFile {
+        StdOut,
+        FileOut,
+    }
+
+    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
+    const STDOUT_COLOR_IDX: usize = 1;
+    const STDOUT_PADDED_LEVEL_IDX: usize = 2;
+    const STDOUT_PADLESS_LEVEL_IDX: usize = 3;
+    const STDOUT_FN_NAME_IDX: usize = 4;
+    const STDOUT_LINE_NUM_IDX: usize = 5;
+
+    const FILE_OUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
+    const FILE_OUT_PADDED_LEVEL_IDX: usize = 1;
+    const FILE_OUT_PADLESS_LEVEL_IDX: usize = 2;
+    const FILE_OUT_FN_NAME_IDX: usize = 3;
+    const FILE_OUT_LINE_NUM_IDX: usize = 4;
+
+
+    fn format_verf_helper(verf_type: VerfFile, first_line_num: u32) -> TestResult {
         // Set up the verification items
         const FN_NAME: &str = "mt_logger::tests::format_verification";
-        const VERF_MATRIX: [[&str; 4]; 6] = [
-            ["TRACE",   "030;105m", "  TRACE  ", "363"],
-            ["DEBUG",   "030;106m", "  DEBUG  ", "364"],
-            ["INFO",    "030;107m", "  INFO   ", "365"],
-            ["WARNING", "030;103m", " WARNING ", "366"],
-            ["ERROR",   "030;101m", "  ERROR  ", "367"],
-            ["FATAL",   "031;040m", "  FATAL  ", "368"],
+        const VERF_MATRIX: [[&str; 3]; 6] = [
+            ["TRACE",   "030;105m", "  TRACE  "],
+            ["DEBUG",   "030;106m", "  DEBUG  "],
+            ["INFO",    "030;107m", "  INFO   "],
+            ["WARNING", "030;103m", " WARNING "],
+            ["ERROR",   "030;101m", "  ERROR  "],
+            ["FATAL",   "031;040m", "  FATAL  "],
         ];
-        const NAME_IDX: usize = 0;
-        const COLOR_IDX: usize = 1;
-        const PADDED_NAME_IDX: usize = 2;
-        const LINE_NUM_IDX: usize = 3;
+        const LEVEL_VERF_IDX: usize = 0;
+        const COLOR_VERF_IDX: usize = 1;
+        const PADDED_LEVEL_VERF_IDX: usize = 2;
 
+        // Set up output-specific parameters
+        let filepath;
+        let padded_level_hdr_capture_idx;
+        let fn_name_hdr_capture_idx;
+        let line_num_hdr_capture_idx;
+        let header_regex;
+        match verf_type {
+            VerfFile::StdOut => {
+                filepath = STDOUT_FILENAME;
+                padded_level_hdr_capture_idx = STDOUT_PADDED_LEVEL_IDX;
+                fn_name_hdr_capture_idx = STDOUT_FN_NAME_IDX;
+                line_num_hdr_capture_idx = STDOUT_LINE_NUM_IDX;
+                header_regex = Regex::new(STDOUT_HDR_REGEX_STR)?;
+            },
+            VerfFile::FileOut => {
+                filepath = FILE_OUT_FILENAME;
+                padded_level_hdr_capture_idx = FILE_OUT_PADDED_LEVEL_IDX;
+                fn_name_hdr_capture_idx = FILE_OUT_FN_NAME_IDX;
+                line_num_hdr_capture_idx = FILE_OUT_LINE_NUM_IDX;
+                header_regex = Regex::new(FILE_OUT_HDR_REGEX_STR)?;
+            },
+        }
+        let level_content_capture_idx = 1;
 
+        // Create regex for message content
+        let content_regex = Regex::new(r"^   This is an? (\w*) message.")?;
+
+        // Open verification file and read into vector by lines
         let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
         let mut verf_string = String::new();
         verf_file.read_to_string(&mut verf_string)?;
@@ -308,37 +354,29 @@ mod tests {
         while let Some(header_line) = verf_line_iter.next().filter(|v| !v.is_empty()) {
             // Match regex against header line, and capture groups
             let header_captures = header_regex.captures(header_line)
-                .unwrap_or_else(|| panic!("Header line {} '{}' did not match Regex for stdout", i, header_line));
-        
-            // Set offset for file-out verification for proper indexing
-            let offset;
-            if filepath == FILE_OUT_FILENAME {
-                offset = 1;
-            } else {
-                offset = 0;
-            }
+                .unwrap_or_else(|| panic!("{:?} header line {} '{}' did not match Regex:\n   {}", verf_type, i, header_line, header_regex.as_str()));
 
             // Verify capture groups
-            if filepath == STDOUT_FILENAME && &header_captures[1] != VERF_MATRIX[i][COLOR_IDX] {
-                panic!("Wrong color on line '{}' ({}), should be '{}'", header_line, &header_captures[0], VERF_MATRIX[i][COLOR_IDX]);
+            if verf_type == VerfFile::StdOut && &header_captures[STDOUT_COLOR_IDX] != VERF_MATRIX[i][COLOR_VERF_IDX] {
+                panic!("Wrong color '{}' on line '{}', should be '{}'", &header_captures[STDOUT_COLOR_IDX], header_line, VERF_MATRIX[i][COLOR_VERF_IDX]);
             }
-            if &header_captures[2 - offset] != VERF_MATRIX[i][PADDED_NAME_IDX] {
-                panic!("Wrong padded name on line '{}', should be '{}'", header_line, VERF_MATRIX[i][PADDED_NAME_IDX]);
+            if &header_captures[padded_level_hdr_capture_idx] != VERF_MATRIX[i][PADDED_LEVEL_VERF_IDX] {
+                panic!("Wrong padded level '{}' on line '{}', should be '{}'", &header_captures[padded_level_hdr_capture_idx], header_line, VERF_MATRIX[i][PADDED_LEVEL_VERF_IDX]);
             }
-            if &header_captures[3 - offset] != FN_NAME {
-                panic!("Wrong function name on line '{}', should be '{}'", header_line, FN_NAME);
+            if &header_captures[fn_name_hdr_capture_idx] != FN_NAME {
+                panic!("Wrong function name '{}' on line '{}', should be '{}'", &header_captures[fn_name_hdr_capture_idx], header_line, FN_NAME);
             }
-            if &header_captures[4 - offset] != VERF_MATRIX[i][LINE_NUM_IDX] {
-                panic!("Wrong line number on line '{}', should be '{}'", header_line, VERF_MATRIX[i][LINE_NUM_IDX]);
+            if header_captures[line_num_hdr_capture_idx].parse::<u32>()? != first_line_num + i as u32 {
+                panic!("Wrong line number '{}' on line '{}', should be '{}'", &header_captures[line_num_hdr_capture_idx], header_line, first_line_num + i as u32);
             }
 
             // Verify content line
             let content_line = verf_line_iter.next().unwrap_or_else(|| panic!("Missing content line after header '{}'", header_line));
             let content_captures = content_regex.captures(content_line)
-                .unwrap_or_else(|| panic!("Content line {} '{}' did not match Regex for stdout", i, content_line));
+                .unwrap_or_else(|| panic!("{:?} content line {} '{}' did not match content Regex:\n   {}", verf_type, i, content_line, content_regex.as_str()));
 
-            if &content_captures[1] != VERF_MATRIX[i][NAME_IDX] {
-                panic!("Wrong name in content line '{}', should be '{}'", content_line, VERF_MATRIX[i][NAME_IDX])
+            if &content_captures[level_content_capture_idx] != VERF_MATRIX[i][LEVEL_VERF_IDX] {
+                panic!("Wrong level '{}' in content line '{}', should be '{}'", &content_captures[level_content_capture_idx], content_line, VERF_MATRIX[i][LEVEL_VERF_IDX])
             }
 
             i += 1;
@@ -349,7 +387,6 @@ mod tests {
 
     #[test]
     fn format_verification() -> TestResult {
-
         // Acquire logger mutex, will be released once the test function completes
         let _mutex = LOGGER_MUTEX.lock()?;
         
@@ -360,6 +397,7 @@ mod tests {
             MtLogger::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
         })?;
 
+        let first_line_num = line!() + 1;
         ci_log!(FilterLevel::Trace, "This is a TRACE message.");
         ci_log!(FilterLevel::Debug, "This is a DEBUG message.");
         ci_log!(FilterLevel::Info, "This is an INFO message.");
@@ -372,18 +410,83 @@ mod tests {
         thread::sleep(time::Duration::from_secs(1));
         println!("Done sleeping!");
 
-        // Create regexes to match against expect stdout format
-        let stdout_regex = Regex::new(
-            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(.{9})\]\x1b\[0m (.*)\(\) line (\d*):"
-        )?;
-        let file_out_regex = Regex::new(
-            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \[(.{9})\] (.*)\(\) line (\d*):"
-        )?;
-        let content_regex = Regex::new(r"^   This is an? (.*) message.")?;
-
         // Verify that the verification files contain well-formatted messages
-        format_verf_helper(&stdout_regex, &content_regex, STDOUT_FILENAME)?;
-        format_verf_helper(&file_out_regex, &content_regex, FILE_OUT_FILENAME)?;
+        format_verf_helper(VerfFile::StdOut, first_line_num)?;
+        format_verf_helper(VerfFile::FileOut, first_line_num)?;
+
+        Ok(())
+    }
+
+    fn output_type_helper(verf_type: VerfFile) -> TestResult {
+        // Set up the verification items
+        const VERF_MATRIX: [[[&str; 2]; 4]; 2] = [
+            [["TRACE", "BOTH"],
+            ["FATAL", "BOTH"],
+            ["TRACE", "STDOUT"],
+            ["FATAL", "STDOUT"],],
+            [["TRACE", "BOTH"],
+            ["FATAL", "BOTH"],
+            ["TRACE", "FILEOUT"],
+            ["FATAL", "FILEOUT"],],
+        ];
+        const STDOUT_TYPE_IDX: usize = 0;
+        const FILE_OUT_TYPE_IDX: usize = 1;
+        const LEVEL_VERF_IDX: usize = 0;
+        const OUTPUT_TYPE_VERF_IDX: usize = 1;
+
+        // Set up output-specific parameters
+        let filepath;
+        let verf_type_idx;
+        let padless_level_hdr_capture_idx;
+        let header_regex;
+        match verf_type {
+            VerfFile::StdOut => {
+                filepath = STDOUT_FILENAME;
+                verf_type_idx = STDOUT_TYPE_IDX;
+                padless_level_hdr_capture_idx = STDOUT_PADLESS_LEVEL_IDX;
+                header_regex = Regex::new(STDOUT_HDR_REGEX_STR)?;
+            },
+            VerfFile::FileOut => {
+                filepath = FILE_OUT_FILENAME;
+                verf_type_idx = FILE_OUT_TYPE_IDX;
+                padless_level_hdr_capture_idx = FILE_OUT_PADLESS_LEVEL_IDX;
+                header_regex = Regex::new(FILE_OUT_HDR_REGEX_STR)?;
+            },
+        }
+        let output_type_capture_idx = 1;
+
+        // Create regex for message content
+        let content_regex = Regex::new(r"^\s*This message appears in (\w*).")?;
+
+        // Open verification file and read into vector by lines
+        let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
+        let mut verf_string = String::new();
+        verf_file.read_to_string(&mut verf_string)?;
+
+        let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
+        let mut verf_line_iter = verf_lines.iter_mut();
+
+        // Verify that the verification files contain the correct filter level and content lines
+        let mut i = 0;
+        while let Some(header_line) = verf_line_iter.next().filter(|v| !v.is_empty()) {
+            // Verify header contains the correct log level
+            let header_captures = header_regex.captures(header_line)
+                .unwrap_or_else(|| panic!("{:?} header line {} '{}' did not match Regex:\n   {}", verf_type, i, header_line, header_regex.as_str()));
+            if &header_captures[padless_level_hdr_capture_idx] != VERF_MATRIX[verf_type_idx][i][LEVEL_VERF_IDX] {
+                panic!("Wrong level '{}' on line '{}', should be '{}'", &header_captures[padless_level_hdr_capture_idx], header_line, VERF_MATRIX[verf_type_idx][i][LEVEL_VERF_IDX]);
+            }
+
+            // Verify content contains the correct output type
+            let content_line = verf_line_iter.next().unwrap_or_else(|| panic!("Missing content line after header '{}'", header_line));
+            let content_captures = content_regex.captures(content_line)
+                .unwrap_or_else(|| panic!("Content line {} '{}' did not match content Regex", i, content_line));
+            
+            if &content_captures[output_type_capture_idx] != VERF_MATRIX[verf_type_idx][i][OUTPUT_TYPE_VERF_IDX] {
+                panic!("Wrong output type '{}' on line '{}', should be '{}'", &content_captures[output_type_capture_idx], content_line, VERF_MATRIX[verf_type_idx][i][OUTPUT_TYPE_VERF_IDX])
+            }
+
+            i += 1;
+        }
 
         Ok(())
     }
@@ -402,101 +505,39 @@ mod tests {
 
         ci_log!(
             FilterLevel::Trace,
-            "This message appears in BOTH console and file."
+            "This message appears in BOTH."
         );
         ci_log!(
             FilterLevel::Fatal,
-            "This message appears in BOTH console and file."
+            "This message appears in BOTH."
         );
 
         // Log messages to CONSOLE only
         MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Console))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in CONSOLE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in CONSOLE ONLY.");
+            .log_cmd(Command::SetOutput(OutputType::Console))?;
+        ci_log!(FilterLevel::Trace, "This message appears in STDOUT.");
+        ci_log!(FilterLevel::Fatal, "This message appears in STDOUT.");
 
         // Log messages to FILE only
         MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::File))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
+            .log_cmd(Command::SetOutput(OutputType::File))?;
+        ci_log!(FilterLevel::Trace, "This message appears in FILEOUT.");
+        ci_log!(FilterLevel::Fatal, "This message appears in FILEOUT.");
 
         // Log messages to NEITHER output
         MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in FILE ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in FILE ONLY.");
-
-        // Log messages to NEITHER output
-        MtLogger::global()
-            .log_cmd(Command::SetOutput(OutputType::Neither))
-            .unwrap();
-        ci_log!(FilterLevel::Trace, "This message appears in NEITHER ONLY.");
-        ci_log!(FilterLevel::Fatal, "This message appears in NEITHER ONLY.");
+            .log_cmd(Command::SetOutput(OutputType::Neither))?;
+        ci_log!(FilterLevel::Trace, "This message appears in NEITHER.");
+        ci_log!(FilterLevel::Fatal, "This message appears in NEITHER.");
 
         // Sleep for 1 seconds to allow the receiver thread to do stuff
         println!("Sleeping for 1s...");
         thread::sleep(time::Duration::from_secs(1));
         println!("Done sleeping!");
+
+        // Verify that the verification files contain only the correct messages
+        output_type_helper(VerfFile::StdOut)?;
+        output_type_helper(VerfFile::FileOut)?;
 
         Ok(())
     }
