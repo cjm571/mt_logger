@@ -46,7 +46,7 @@ impl Sender {
         Self { logger_tx }
     }
 
-    
+
     /*  *  *  *  *  *  *  *\
      *  Utility Methods   *
     \*  *  *  *  *  *  *  */

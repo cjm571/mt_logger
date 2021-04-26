@@ -76,7 +76,7 @@ impl Receiver {
         }
     }
 
-    
+
     /*  *  *  *  *  *  *\
      * Utility Methods *
     \*  *  *  *  *  *  */
@@ -113,18 +113,22 @@ impl Receiver {
                 err
             ),
         };
-        
+
         #[cfg(test)]
         {
             // Create verification files
-            fs::File::create(STDOUT_FILENAME)
-                .unwrap_or_else(
-                    |err| panic!("Encountered error '{}' while creating stdout verification file", err)
-                );
-            fs::File::create(FILE_OUT_FILENAME)
-                .unwrap_or_else(
-                    |err| panic!("Encountered error '{}' while creating file output verification file", err)
-                );
+            fs::File::create(STDOUT_FILENAME).unwrap_or_else(|err| {
+                panic!(
+                    "Encountered error '{}' while creating stdout verification file",
+                    err
+                )
+            });
+            fs::File::create(FILE_OUT_FILENAME).unwrap_or_else(|err| {
+                panic!(
+                    "Encountered error '{}' while creating file output verification file",
+                    err
+                )
+            });
         }
 
         loop {
@@ -177,7 +181,6 @@ impl Receiver {
                                             |err| panic!("Encountered error '{}' while attempting to write to stdout verification file.", err)
                                         );
                                 }
-
                             }
 
                             // File output
@@ -198,7 +201,7 @@ impl Receiver {
                                     .unwrap_or_else(
                                         |err| eprintln!("{}: Encountered error '{}' while attempting to write to log file.", timestamp, err)
                                     );
-                                
+
                                 #[cfg(test)]
                                 {
                                     // Write to stdout verification file
