@@ -20,7 +20,8 @@ Purpose:
 
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 
 use std::fs;
 use std::io::prelude::*;
@@ -55,6 +56,7 @@ pub struct Receiver {
     logger_rx: mpsc::Receiver<Command>,
     filter_level: FilterLevel,
     output_type: OutputType,
+    msg_count: Arc<AtomicU64>,
 }
 
 
@@ -68,11 +70,13 @@ impl Receiver {
         logger_rx: mpsc::Receiver<Command>,
         filter_level: FilterLevel,
         output_type: OutputType,
+        msg_count: Arc<AtomicU64>,
     ) -> Self {
         Self {
             logger_rx,
             filter_level,
             output_type,
+            msg_count,
         }
     }
 
@@ -217,6 +221,9 @@ impl Receiver {
                                 }
                             }
                         }
+
+                        // Increment shared message count
+                        self.msg_count.fetch_add(1, Ordering::SeqCst);
                     }
 
                     /* Configuration Commands */

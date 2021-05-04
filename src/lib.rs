@@ -23,11 +23,10 @@ Purpose:
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SendError};
 use std::thread;
-
-extern crate lazy_static;
-extern crate regex;
 
 use once_cell::sync::OnceCell;
 
@@ -91,6 +90,7 @@ pub enum Command {
 pub struct MtLogger {
     enabled: bool,
     sender: Sender,
+    msg_count: Arc<AtomicU64>,
 }
 
 pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
@@ -125,6 +125,7 @@ impl MtLogger {
         Self {
             enabled: false,
             sender: dummy_sender,
+            msg_count: Arc::default(),
         }
     }
 
@@ -132,8 +133,18 @@ impl MtLogger {
         INSTANCE.get().expect("Logger not initialized")
     }
 
+
     /*  *  *  *  *  *  *  *\
-     *  Utility Methods   *
+     *  Accessor Methods  *
+    \*  *  *  *  *  *  *  */
+
+    pub fn msg_count(&self) -> u64 {
+        self.msg_count.load(Ordering::SeqCst)
+    }
+
+
+    /*  *  *  *  *  *  *  *\
+     *   Utility Methods  *
     \*  *  *  *  *  *  *  */
 
     //FEAT: Bring filtering back to the sending-side
@@ -180,9 +191,12 @@ impl Default for MtLogger {
         // Create the log messaging and control channel
         let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
+        // Create the shared message count
+        let msg_count = Arc::new(AtomicU64::new(0));
+
         //OPT: *PERFORMANCE* Would be better to set the receiver thread's priority as low as possible
         // Initialize receiver struct, build and spawn thread
-        let mut log_receiver = Receiver::new(logger_rx, FilterLevel::Info, OutputType::Both);
+        let mut log_receiver = Receiver::new(logger_rx, FilterLevel::Info, OutputType::Both, Arc::clone(&msg_count));
         thread::Builder::new()
             .name("log_receiver".to_string())
             .spawn(move || log_receiver.main())
@@ -194,6 +208,7 @@ impl Default for MtLogger {
         Self {
             enabled: true,
             sender: log_sender,
+            msg_count,
         }
     }
 }
@@ -274,7 +289,7 @@ mod tests {
         FileOut,
     }
 
-    const SLEEP_TIME_SEC: u64 = 5;
+    const SLEEP_INTERVAL_MS: u64 = 10;
 
     const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
     const STDOUT_COLOR_IDX: usize = 1;
@@ -428,6 +443,8 @@ mod tests {
 
     #[test]
     fn format_verification() -> TestResult {
+        const MSG_COUNT: u64 = 6;
+
         // Acquire logger mutex, will be released once the test function completes
         let _mutex = LOGGER_MUTEX.lock()?;
 
@@ -447,9 +464,13 @@ mod tests {
         mt_log!(FilterLevel::Fatal, "This is a FATAL message.")?;
 
         // Sleep for to allow the receiver thread to do stuff
-        println!("Sleeping for {}s...", SLEEP_TIME_SEC);
-        thread::sleep(time::Duration::from_secs(SLEEP_TIME_SEC));
-        println!("Done sleeping!");
+        println!("Sleeping until all messages have been received...");
+        let start_time = time::Instant::now();
+        while MtLogger::global().msg_count() < MSG_COUNT
+        {
+            thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
+        }
+        println!("Done sleeping after {}ms", start_time.elapsed().as_millis());
 
         // Verify that the verification files contain well-formatted messages
         format_verf_helper(VerfFile::StdOut, first_line_num)?;
@@ -567,6 +588,8 @@ mod tests {
 
     #[test]
     fn output_type_cmd_test() -> TestResult {
+        const MSG_COUNT: u64 = 6;
+
         // Acquire logger mutex, will be released once the test function completes
         let _mutex = LOGGER_MUTEX.lock()?;
 
@@ -596,9 +619,13 @@ mod tests {
         mt_log!(FilterLevel::Fatal, "This message appears in NEITHER.")?;
 
         // Sleep to allow the receiver thread to do stuff
-        println!("Sleeping for {}s...", SLEEP_TIME_SEC);
-        thread::sleep(time::Duration::from_secs(SLEEP_TIME_SEC));
-        println!("Done sleeping!");
+        println!("Sleeping until all messages have been received...");
+        let start_time = time::Instant::now();
+        while MtLogger::global().msg_count() < MSG_COUNT
+        {
+            thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
+        }
+        println!("Done sleeping after {}ms", start_time.elapsed().as_millis());
 
         // Verify that the verification files contain only the correct messages
         output_type_helper(VerfFile::StdOut)?;
