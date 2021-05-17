@@ -29,14 +29,14 @@ use std::path::PathBuf;
 
 use chrono::Local;
 
-use crate::{Command, FilterLevel, OutputType};
+use crate::{Command, Level, OutputStream};
 
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Named Constants
 ///////////////////////////////////////////////////////////////////////////////
 
-/// Padding required to align text after FilterLevel label
+/// Padding required to align text after Level label
 const LEVEL_LABEL_WIDTH: usize = 9;
 
 /// Padding to the left of the log message
@@ -54,8 +54,8 @@ pub const FILE_OUT_FILENAME: &str = "logs/file_out_redirect.log";
 
 pub struct Receiver {
     logger_rx: mpsc::Receiver<Command>,
-    filter_level: FilterLevel,
-    output_type: OutputType,
+    output_level: Level,
+    output_stream: OutputStream,
     msg_count: Arc<AtomicU64>,
 }
 
@@ -68,14 +68,14 @@ impl Receiver {
     /// Fully-qualified constructor
     pub fn new(
         logger_rx: mpsc::Receiver<Command>,
-        filter_level: FilterLevel,
-        output_type: OutputType,
+        output_level: Level,
+        output_stream: OutputStream,
         msg_count: Arc<AtomicU64>,
     ) -> Self {
         Self {
             logger_rx,
-            filter_level,
-            output_type,
+            output_level,
+            output_stream,
             msg_count,
         }
     }
@@ -145,16 +145,16 @@ impl Receiver {
                 match logger_cmd {
                     /* Messages */
                     Command::LogMsg(log_tuple) => {
-                        if log_tuple.level >= self.filter_level {
+                        if log_tuple.level >= self.output_level {
                             // Console output
-                            if self.output_type as u8 & OutputType::Console as u8 != 0 {
+                            if self.output_stream as u8 & OutputStream::StdOut as u8 != 0 {
                                 let log_color = match log_tuple.level {
-                                    FilterLevel::Trace => "\x1b[030;105m",
-                                    FilterLevel::Debug => "\x1b[030;106m",
-                                    FilterLevel::Info => "\x1b[030;107m",
-                                    FilterLevel::Warning => "\x1b[030;103m",
-                                    FilterLevel::Error => "\x1b[030;101m",
-                                    FilterLevel::Fatal => "\x1b[031;040m",
+                                    Level::Trace => "\x1b[030;105m",
+                                    Level::Debug => "\x1b[030;106m",
+                                    Level::Info => "\x1b[030;107m",
+                                    Level::Warning => "\x1b[030;103m",
+                                    Level::Error => "\x1b[030;101m",
+                                    Level::Fatal => "\x1b[031;040m",
                                 };
                                 let msg_formatted = format!(
                                     "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
@@ -189,7 +189,7 @@ impl Receiver {
                             }
 
                             // File output
-                            if self.output_type as u8 & OutputType::File as u8 != 0 {
+                            if self.output_stream as u8 & OutputStream::File as u8 != 0 {
                                 let msg_formatted = format!(
                                     "{timestamp}: [{level:^level_width$}] {fn_name}() line {line}:\n{msg:>msg_leftpad$}\n",
                                     timestamp   = timestamp,
@@ -227,11 +227,11 @@ impl Receiver {
                     }
 
                     /* Configuration Commands */
-                    Command::SetFilterLevel(filter_level) => {
-                        self.filter_level = filter_level;
+                    Command::SetOutputLevel(output_level) => {
+                        self.output_level = output_level;
                     }
-                    Command::SetOutput(output_type) => {
-                        self.output_type = output_type;
+                    Command::SetOutputStream(output_stream) => {
+                        self.output_stream = output_stream;
                     }
                 };
             }

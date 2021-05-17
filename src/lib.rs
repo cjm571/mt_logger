@@ -22,6 +22,7 @@ Purpose:
 
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -55,7 +56,7 @@ use self::receiver::Receiver;
 
 /// Denotes the level or severity of the log message.
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
-pub enum FilterLevel {
+pub enum Level {
     Trace = 0x01,
     Debug = 0x02,
     Info = 0x04,
@@ -66,24 +67,24 @@ pub enum FilterLevel {
 
 /// Tuple struct containing log message and its log level
 pub struct MsgTuple {
-    pub level: FilterLevel,
+    pub level: Level,
     pub fn_name: String,
     pub line: u32,
     pub msg: String,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum OutputType {
+pub enum OutputStream {
     Neither = 0x0,
-    Console = 0x1,
+    StdOut = 0x1,
     File = 0x2,
     Both = 0x3,
 }
 
 pub enum Command {
     LogMsg(MsgTuple),
-    SetFilterLevel(FilterLevel),
-    SetOutput(OutputType),
+    SetOutputLevel(Level),
+    SetOutputStream(OutputStream),
 }
 
 #[derive(Clone, Debug)]
@@ -93,7 +94,15 @@ pub struct MtLogger {
     msg_count: Arc<AtomicU64>,
 }
 
-pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
+#[derive(Debug)]
+pub enum MtLoggerError {
+    LoggerNotInitialized,
+
+    // Wrappers
+    SendError(SendError<Command>)
+}
+
+static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -102,35 +111,29 @@ pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 
 impl MtLogger {
     /// Fully-qualified constructor
-    pub fn new(filter: FilterLevel, output_type: OutputType) -> Self {
-        let logger_instance = Self::default();
+    pub fn new(output_level: Level, output_stream: OutputStream) -> Self {
+        // Create the log messaging and control channel
+        let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
-        logger_instance
-            .log_cmd(Command::SetOutput(output_type))
+        // Create the shared message count
+        let msg_count = Arc::new(AtomicU64::new(0));
+
+        //OPT: *PERFORMANCE* Would be better to set the receiver thread's priority as low as possible
+        // Initialize receiver struct, build and spawn thread
+        let mut log_receiver = Receiver::new(logger_rx, output_level, output_stream, Arc::clone(&msg_count));
+        thread::Builder::new()
+            .name("log_receiver".to_string())
+            .spawn(move || log_receiver.main())
             .unwrap();
-        logger_instance
-            .log_cmd(Command::SetFilterLevel(filter))
-            .unwrap();
 
-        logger_instance
-    }
-
-    pub fn new_disabled() -> Self {
-        // Create dummy channel handles
-        let (dummy_tx, _dummy_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
-
-        // Initialize dummy sender struct
-        let dummy_sender = Sender::new(dummy_tx);
+        // Initialize sender struct
+        let log_sender = Sender::new(logger_tx);
 
         Self {
-            enabled: false,
-            sender: dummy_sender,
-            msg_count: Arc::default(),
+            enabled: true,
+            sender: log_sender,
+            msg_count,
         }
-    }
-
-    pub fn global() -> &'static Self {
-        INSTANCE.get().expect("Logger not initialized")
     }
 
 
@@ -150,7 +153,7 @@ impl MtLogger {
     //FEAT: Bring filtering back to the sending-side
     pub fn log_msg(
         &self,
-        level: FilterLevel,
+        level: Level,
         fn_name: String,
         line: u32,
         msg: String,
@@ -184,49 +187,47 @@ impl MtLogger {
 ///////////////////////////////////////////////////////////////////////////////
 
 /*  *  *  *  *  *  *  *\
- *      MtLogger      *
+ *       Level        *
 \*  *  *  *  *  *  *  */
-impl Default for MtLogger {
-    fn default() -> Self {
-        // Create the log messaging and control channel
-        let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
-        // Create the shared message count
-        let msg_count = Arc::new(AtomicU64::new(0));
-
-        //OPT: *PERFORMANCE* Would be better to set the receiver thread's priority as low as possible
-        // Initialize receiver struct, build and spawn thread
-        let mut log_receiver = Receiver::new(logger_rx, FilterLevel::Info, OutputType::Both, Arc::clone(&msg_count));
-        thread::Builder::new()
-            .name("log_receiver".to_string())
-            .spawn(move || log_receiver.main())
-            .unwrap();
-
-        // Initialize sender struct
-        let log_sender = Sender::new(logger_tx);
-
-        Self {
-            enabled: true,
-            sender: log_sender,
-            msg_count,
+impl fmt::Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Trace => write!(f, "TRACE"),
+            Self::Debug => write!(f, "DEBUG"),
+            Self::Info => write!(f, "INFO"),
+            Self::Warning => write!(f, "WARNING"),
+            Self::Error => write!(f, "ERROR"),
+            Self::Fatal => write!(f, "FATAL"),
         }
     }
 }
 
 
 /*  *  *  *  *  *  *  *\
- *     FilterLevel    *
+ *    MtLoggerError   *
 \*  *  *  *  *  *  *  */
-impl fmt::Display for FilterLevel {
+
+impl Error for MtLoggerError {}
+
+impl fmt::Display for MtLoggerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            FilterLevel::Trace => write!(f, "TRACE"),
-            FilterLevel::Debug => write!(f, "DEBUG"),
-            FilterLevel::Info => write!(f, "INFO"),
-            FilterLevel::Warning => write!(f, "WARNING"),
-            FilterLevel::Error => write!(f, "ERROR"),
-            FilterLevel::Fatal => write!(f, "FATAL"),
+            Self::LoggerNotInitialized => {
+                write!(f, "Attempted a command before the logger instance was initialized")
+            },
+
+            // Wrappers
+            Self::SendError(send_err) => {
+                write!(f, "Encountered SendError '{}' while performing a logger command", send_err)
+            }
         }
+    }
+}
+
+impl From<SendError<Command>> for MtLoggerError  {
+    fn from(src: SendError<Command>) -> Self {
+        Self::SendError(src)
     }
 }
 
@@ -234,6 +235,15 @@ impl fmt::Display for FilterLevel {
 ///////////////////////////////////////////////////////////////////////////////
 //  Macro Definitions
 ///////////////////////////////////////////////////////////////////////////////
+
+#[macro_export]
+macro_rules! mt_new {
+    ($output_level:expr, $output_stream:expr) => {{
+        let logger = $crate::MtLogger::new($output_level, $output_stream);
+
+        $crate::INSTANCE.set(logger).expect("MtLogger INSTANCE already initialized");
+    }};
+}
 
 #[macro_export]
 macro_rules! mt_log {
@@ -249,11 +259,60 @@ macro_rules! mt_log {
 
         let msg_content: String = format!($( $fmt_args ),*);
 
-        $crate::MtLogger::global().log_msg($log_level, fn_name.to_string(), line!(), msg_content)
+        $crate::INSTANCE.get()
+            // If None is encountered, the logger has not been initialized, which is an error
+            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
+            .log_msg(
+                $log_level,
+                fn_name.to_string(),
+                line!(),
+                msg_content
+            )
+            // Map to a wrapper error so this and the ? above have the same return type
+            .map_err($crate::MtLoggerError::SendError)
     }};
 }
 
-//TODO: Add macros for setting output, filter
+#[macro_export]
+macro_rules! mt_stream {
+    ($output_stream:expr) => {{
+        // Get the global instance and send a command to set the output stream
+        $crate::INSTANCE.get()
+            // If None is encountered, the logger has not been initialized, which is an error
+            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
+            .log_cmd(
+                $crate::Command::SetOutputStream($output_stream)
+            )
+            // Map to a wrapper error so this and the ? above have the same return type
+            .map_err($crate::MtLoggerError::SendError)
+    }};
+}
+
+#[macro_export]
+macro_rules! mt_level {
+    ($output_level:expr) => {{
+        // Get the global instance and send a command to set the output level
+        $crate::INSTANCE.get()
+            // If None is encountered, the logger has not been initialized, which is an error
+            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
+            .log_cmd(
+                $crate::Command::SetOutputLevel($output_level)
+            )
+            // Map to a wrapper error so this and the ? above have the same return type
+            .map_err($crate::MtLoggerError::SendError)
+    }};
+}
+
+#[macro_export]
+macro_rules! mt_count {
+    () => {{
+        // Get the global instance and retrieve the message count
+        $crate::INSTANCE.get()
+            // If None is encountered, the logger has not been initialized, which is an error
+            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
+            .msg_count()
+    }}
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -273,7 +332,7 @@ mod tests {
     use regex::Regex;
 
     use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
-    use crate::{Command, FilterLevel, MtLogger, OutputType, INSTANCE};
+    use crate::{Level, MtLogger, OutputStream, INSTANCE};
 
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -449,24 +508,24 @@ mod tests {
         let _mutex = LOGGER_MUTEX.lock()?;
 
         // Create or update a logger instance that will log all messages to Both outputs
-        let logger = MtLogger::new(FilterLevel::Trace, OutputType::Both);
+        let logger = MtLogger::new(Level::Trace, OutputStream::Both);
         INSTANCE.set(logger).or_else(|_| {
-            MtLogger::global().log_cmd(Command::SetOutput(OutputType::Both))?;
-            MtLogger::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
+            mt_stream!(OutputStream::Both)?;
+            mt_level!(Level::Trace)
         })?;
 
         let first_line_num = line!() + 1;
-        mt_log!(FilterLevel::Trace, "This is a TRACE message.")?;
-        mt_log!(FilterLevel::Debug, "This is a DEBUG message.")?;
-        mt_log!(FilterLevel::Info, "This is an INFO message.")?;
-        mt_log!(FilterLevel::Warning, "This is a WARNING message.")?;
-        mt_log!(FilterLevel::Error, "This is an ERROR message.")?;
-        mt_log!(FilterLevel::Fatal, "This is a FATAL message.")?;
+        mt_log!(Level::Trace, "This is a TRACE message.")?;
+        mt_log!(Level::Debug, "This is a DEBUG message.")?;
+        mt_log!(Level::Info, "This is an INFO message.")?;
+        mt_log!(Level::Warning, "This is a WARNING message.")?;
+        mt_log!(Level::Error, "This is an ERROR message.")?;
+        mt_log!(Level::Fatal, "This is a FATAL message.")?;
 
         // Sleep for to allow the receiver thread to do stuff
         println!("Sleeping until all messages have been received...");
         let start_time = time::Instant::now();
-        while MtLogger::global().msg_count() < MSG_COUNT
+        while mt_count!() < MSG_COUNT
         {
             thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
         }
@@ -593,35 +652,35 @@ mod tests {
         // Acquire logger mutex, will be released once the test function completes
         let _mutex = LOGGER_MUTEX.lock()?;
 
-        // Create or update a logger instance that will log messages to BOTH outputs
-        let logger = MtLogger::new(FilterLevel::Trace, OutputType::Both);
+        // Create or update a logger instance that will log all messages to Both outputs
+        let logger = MtLogger::new(Level::Trace, OutputStream::Both);
         INSTANCE.set(logger).or_else(|_| {
-            MtLogger::global().log_cmd(Command::SetOutput(OutputType::Both))?;
-            MtLogger::global().log_cmd(Command::SetFilterLevel(FilterLevel::Trace))
+            mt_stream!(OutputStream::Both)?;
+            mt_level!(Level::Trace)
         })?;
 
-        mt_log!(FilterLevel::Trace, "This message appears in BOTH.")?;
-        mt_log!(FilterLevel::Fatal, "This message appears in BOTH.")?;
+        mt_log!(Level::Trace, "This message appears in BOTH.")?;
+        mt_log!(Level::Fatal, "This message appears in BOTH.")?;
 
         // Log messages to STDOUT only
-        MtLogger::global().log_cmd(Command::SetOutput(OutputType::Console))?;
-        mt_log!(FilterLevel::Trace, "This message appears in STDOUT.")?;
-        mt_log!(FilterLevel::Fatal, "This message appears in STDOUT.")?;
+        mt_stream!(OutputStream::StdOut)?;
+        mt_log!(Level::Trace, "This message appears in STDOUT.")?;
+        mt_log!(Level::Fatal, "This message appears in STDOUT.")?;
 
         // Log messages to FILE only
-        MtLogger::global().log_cmd(Command::SetOutput(OutputType::File))?;
-        mt_log!(FilterLevel::Trace, "This message appears in FILEOUT.")?;
-        mt_log!(FilterLevel::Fatal, "This message appears in FILEOUT.")?;
+        mt_stream!(OutputStream::File)?;
+        mt_log!(Level::Trace, "This message appears in FILEOUT.")?;
+        mt_log!(Level::Fatal, "This message appears in FILEOUT.")?;
 
         // Log messages to NEITHER output
-        MtLogger::global().log_cmd(Command::SetOutput(OutputType::Neither))?;
-        mt_log!(FilterLevel::Trace, "This message appears in NEITHER.")?;
-        mt_log!(FilterLevel::Fatal, "This message appears in NEITHER.")?;
+        mt_stream!(OutputStream::Neither)?;
+        mt_log!(Level::Trace, "This message appears in NEITHER.")?;
+        mt_log!(Level::Fatal, "This message appears in NEITHER.")?;
 
         // Sleep to allow the receiver thread to do stuff
         println!("Sleeping until all messages have been received...");
         let start_time = time::Instant::now();
-        while MtLogger::global().msg_count() < MSG_COUNT
+        while mt_count!() < MSG_COUNT
         {
             thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
         }
