@@ -276,16 +276,14 @@ macro_rules! mt_log {
 
         $crate::INSTANCE
             .get()
-            // If None is encountered, the logger has not been initialized, which is an error
-            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
-            .log_msg(
+            // If None is encountered, the logger has not been initialized, so do nothing
+            .and_then(|instance| instance.log_msg(
                 $log_level,
                 fn_name.to_string(),
                 line!(),
-                msg_content
-            )
-            // Map to a wrapper error so this and the ? above have the same return type
-            .map_err($crate::MtLoggerError::SendError)
+                msg_content)
+                .ok()
+            );
     }};
 }
 
@@ -295,11 +293,12 @@ macro_rules! mt_stream {
         // Get the global instance and send a command to set the output stream
         $crate::INSTANCE
             .get()
-            // If None is encountered, the logger has not been initialized, which is an error
-            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
-            .log_cmd($crate::Command::SetOutputStream($output_stream))
-            // Map to a wrapper error so this and the ? above have the same return type
-            .map_err($crate::MtLoggerError::SendError)
+            // If None is encountered, the logger has not been initialized, so do nothing
+            .and_then(|instance| {
+                instance
+                    .log_cmd($crate::Command::SetOutputStream($output_stream))
+                    .ok()
+            });
     }};
 }
 
@@ -309,11 +308,12 @@ macro_rules! mt_level {
         // Get the global instance and send a command to set the output level
         $crate::INSTANCE
             .get()
-            // If None is encountered, the logger has not been initialized, which is an error
-            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
-            .log_cmd($crate::Command::SetOutputLevel($output_level))
-            // Map to a wrapper error so this and the ? above have the same return type
-            .map_err($crate::MtLoggerError::SendError)
+            // If None is encountered, the logger has not been initialized, so do nothing
+            .and_then(|instance| {
+                instance
+                    .log_cmd($crate::Command::SetOutputLevel($output_level))
+                    .ok()
+            });
     }};
 }
 
@@ -324,8 +324,8 @@ macro_rules! mt_count {
         $crate::INSTANCE
             .get()
             // If None is encountered, the logger has not been initialized, which is an error
-            .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
-            .msg_count()
+            .and_then(|instance| Some(instance.msg_count()))
+            .unwrap()
     }};
 }
 
@@ -524,18 +524,18 @@ mod tests {
 
         // Create or update a logger instance that will log all messages to Both outputs
         let logger = MtLogger::new(Level::Trace, OutputStream::Both);
-        INSTANCE.set(logger).or_else(|_| {
-            mt_stream!(OutputStream::Both)?;
-            mt_level!(Level::Trace)
-        })?;
+        if let Err(_) = INSTANCE.set(logger) {
+            mt_stream!(OutputStream::Both);
+            mt_level!(Level::Trace);
+        }
 
         let first_line_num = line!() + 1;
-        mt_log!(Level::Trace, "This is a TRACE message.")?;
-        mt_log!(Level::Debug, "This is a DEBUG message.")?;
-        mt_log!(Level::Info, "This is an INFO message.")?;
-        mt_log!(Level::Warning, "This is a WARNING message.")?;
-        mt_log!(Level::Error, "This is an ERROR message.")?;
-        mt_log!(Level::Fatal, "This is a FATAL message.")?;
+        mt_log!(Level::Trace, "This is a TRACE message.");
+        mt_log!(Level::Debug, "This is a DEBUG message.");
+        mt_log!(Level::Info, "This is an INFO message.");
+        mt_log!(Level::Warning, "This is a WARNING message.");
+        mt_log!(Level::Error, "This is an ERROR message.");
+        mt_log!(Level::Fatal, "This is a FATAL message.");
 
         // Sleep for to allow the receiver thread to do stuff
         println!("Sleeping until all messages have been received...");
@@ -668,28 +668,28 @@ mod tests {
 
         // Create or update a logger instance that will log all messages to Both outputs
         let logger = MtLogger::new(Level::Trace, OutputStream::Both);
-        INSTANCE.set(logger).or_else(|_| {
-            mt_stream!(OutputStream::Both)?;
-            mt_level!(Level::Trace)
-        })?;
+        if let Err(_) = INSTANCE.set(logger) {
+            mt_stream!(OutputStream::Both);
+            mt_level!(Level::Trace);
+        }
 
-        mt_log!(Level::Trace, "This message appears in BOTH.")?;
-        mt_log!(Level::Fatal, "This message appears in BOTH.")?;
+        mt_log!(Level::Trace, "This message appears in BOTH.");
+        mt_log!(Level::Fatal, "This message appears in BOTH.");
 
         // Log messages to STDOUT only
-        mt_stream!(OutputStream::StdOut)?;
-        mt_log!(Level::Trace, "This message appears in STDOUT.")?;
-        mt_log!(Level::Fatal, "This message appears in STDOUT.")?;
+        mt_stream!(OutputStream::StdOut);
+        mt_log!(Level::Trace, "This message appears in STDOUT.");
+        mt_log!(Level::Fatal, "This message appears in STDOUT.");
 
         // Log messages to FILE only
-        mt_stream!(OutputStream::File)?;
-        mt_log!(Level::Trace, "This message appears in FILEOUT.")?;
-        mt_log!(Level::Fatal, "This message appears in FILEOUT.")?;
+        mt_stream!(OutputStream::File);
+        mt_log!(Level::Trace, "This message appears in FILEOUT.");
+        mt_log!(Level::Fatal, "This message appears in FILEOUT.");
 
         // Log messages to NEITHER output
-        mt_stream!(OutputStream::Neither)?;
-        mt_log!(Level::Trace, "This message appears in NEITHER.")?;
-        mt_log!(Level::Fatal, "This message appears in NEITHER.")?;
+        mt_stream!(OutputStream::Neither);
+        mt_log!(Level::Trace, "This message appears in NEITHER.");
+        mt_log!(Level::Fatal, "This message appears in NEITHER.");
 
         // Sleep to allow the receiver thread to do stuff
         println!("Sleeping until all messages have been received...");

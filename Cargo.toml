@@ -1,6 +1,6 @@
 [package]
 name = "mt_logger"
-version = "1.0.2"
+version = "2.0.0"
 authors = ["CJ McAllister <cjm571@gmail.com>"]
 edition = "2018"
 license = "GPL-3.0-only"
@@ -8,7 +8,7 @@ description = "A low-dependency, multithreaded logging library with a focus on t
 repository = "https://github.com/cjm571/mt_logger"
 #FEAT: Add documentation, readme fields
 
-keywords = ["log", "logging", "multithreaded", "low-dependency", "debugging"]
+keywords = ["logging", "multithreaded", "low-dependency", "debugging"]
 categories = ["asynchronous", "development-tools", "development-tools::debugging"]
 
 [dependencies]
