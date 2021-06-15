@@ -1,10 +1,15 @@
 [package]
 name = "mt_logger"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["CJ McAllister <cjm571@gmail.com>"]
 edition = "2018"
+license = "GPL-3.0-only"
+description = "A low-dependency, multithreaded logging library with a focus on traceability and ease-of-use via macros."
+repository = "https://github.com/cjm571/mt_logger"
+#FEAT: Add documentation, readme fields
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+keywords = ["log, logging, multithreaded, low-dependency, debugging"]
+categories = ["asynchronous", "development-tools", "development-tools::debugging"]
 
 [dependencies]
 chrono = "^0.4"
