@@ -102,9 +102,7 @@ pub enum MtLoggerError {
     SendError(SendError<Command>),
 }
 
-// Clippy doesn't realize this is used in the macros...
-#[allow(dead_code)]
-static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
+pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 
 
 ///////////////////////////////////////////////////////////////////////////////
