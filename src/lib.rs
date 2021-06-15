@@ -24,9 +24,9 @@ Purpose:
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SendError};
+use std::sync::Arc;
 use std::thread;
 
 use once_cell::sync::OnceCell;
@@ -99,9 +99,11 @@ pub enum MtLoggerError {
     LoggerNotInitialized,
 
     // Wrappers
-    SendError(SendError<Command>)
+    SendError(SendError<Command>),
 }
 
+// Clippy doesn't realize this is used in the macros...
+#[allow(dead_code)]
 static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 
 
@@ -118,9 +120,13 @@ impl MtLogger {
         // Create the shared message count
         let msg_count = Arc::new(AtomicU64::new(0));
 
-        //OPT: *PERFORMANCE* Would be better to set the receiver thread's priority as low as possible
         // Initialize receiver struct, build and spawn thread
-        let mut log_receiver = Receiver::new(logger_rx, output_level, output_stream, Arc::clone(&msg_count));
+        let mut log_receiver = Receiver::new(
+            logger_rx,
+            output_level,
+            output_stream,
+            Arc::clone(&msg_count),
+        );
         thread::Builder::new()
             .name("log_receiver".to_string())
             .spawn(move || log_receiver.main())
@@ -214,18 +220,25 @@ impl fmt::Display for MtLoggerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::LoggerNotInitialized => {
-                write!(f, "Attempted a command before the logger instance was initialized")
-            },
+                write!(
+                    f,
+                    "Attempted a command before the logger instance was initialized"
+                )
+            }
 
             // Wrappers
             Self::SendError(send_err) => {
-                write!(f, "Encountered SendError '{}' while performing a logger command", send_err)
+                write!(
+                    f,
+                    "Encountered SendError '{}' while performing a logger command",
+                    send_err
+                )
             }
         }
     }
 }
 
-impl From<SendError<Command>> for MtLoggerError  {
+impl From<SendError<Command>> for MtLoggerError {
     fn from(src: SendError<Command>) -> Self {
         Self::SendError(src)
     }
@@ -241,7 +254,9 @@ macro_rules! mt_new {
     ($output_level:expr, $output_stream:expr) => {{
         let logger = $crate::MtLogger::new($output_level, $output_stream);
 
-        $crate::INSTANCE.set(logger).expect("MtLogger INSTANCE already initialized");
+        $crate::INSTANCE
+            .set(logger)
+            .expect("MtLogger INSTANCE already initialized");
     }};
 }
 
@@ -259,7 +274,8 @@ macro_rules! mt_log {
 
         let msg_content: String = format!($( $fmt_args ),*);
 
-        $crate::INSTANCE.get()
+        $crate::INSTANCE
+            .get()
             // If None is encountered, the logger has not been initialized, which is an error
             .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
             .log_msg(
@@ -277,12 +293,11 @@ macro_rules! mt_log {
 macro_rules! mt_stream {
     ($output_stream:expr) => {{
         // Get the global instance and send a command to set the output stream
-        $crate::INSTANCE.get()
+        $crate::INSTANCE
+            .get()
             // If None is encountered, the logger has not been initialized, which is an error
             .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
-            .log_cmd(
-                $crate::Command::SetOutputStream($output_stream)
-            )
+            .log_cmd($crate::Command::SetOutputStream($output_stream))
             // Map to a wrapper error so this and the ? above have the same return type
             .map_err($crate::MtLoggerError::SendError)
     }};
@@ -292,12 +307,11 @@ macro_rules! mt_stream {
 macro_rules! mt_level {
     ($output_level:expr) => {{
         // Get the global instance and send a command to set the output level
-        $crate::INSTANCE.get()
+        $crate::INSTANCE
+            .get()
             // If None is encountered, the logger has not been initialized, which is an error
             .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
-            .log_cmd(
-                $crate::Command::SetOutputLevel($output_level)
-            )
+            .log_cmd($crate::Command::SetOutputLevel($output_level))
             // Map to a wrapper error so this and the ? above have the same return type
             .map_err($crate::MtLoggerError::SendError)
     }};
@@ -307,11 +321,12 @@ macro_rules! mt_level {
 macro_rules! mt_count {
     () => {{
         // Get the global instance and retrieve the message count
-        $crate::INSTANCE.get()
+        $crate::INSTANCE
+            .get()
             // If None is encountered, the logger has not been initialized, which is an error
             .ok_or($crate::MtLoggerError::LoggerNotInitialized)?
             .msg_count()
-    }}
+    }};
 }
 
 
@@ -525,8 +540,7 @@ mod tests {
         // Sleep for to allow the receiver thread to do stuff
         println!("Sleeping until all messages have been received...");
         let start_time = time::Instant::now();
-        while mt_count!() < MSG_COUNT
-        {
+        while mt_count!() < MSG_COUNT {
             thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
         }
         println!("Done sleeping after {}ms", start_time.elapsed().as_millis());
@@ -680,8 +694,7 @@ mod tests {
         // Sleep to allow the receiver thread to do stuff
         println!("Sleeping until all messages have been received...");
         let start_time = time::Instant::now();
-        while mt_count!() < MSG_COUNT
-        {
+        while mt_count!() < MSG_COUNT {
             thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
         }
         println!("Done sleeping after {}ms", start_time.elapsed().as_millis());
