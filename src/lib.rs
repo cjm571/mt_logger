@@ -190,7 +190,7 @@ impl MtLogger {
     pub fn flush(&self) -> Result<(), MtLoggerError> {
         // Create a channel that will be used to notify completion of the flush
         let (flush_ack_tx, flush_ack_rx) = mpsc::channel::<()>();
-        
+
         // Send a flush command to the receiver thread
         self.sender.send_cmd(Command::Flush(flush_ack_tx))?;
 
@@ -358,16 +358,12 @@ macro_rules! mt_count {
 #[macro_export]
 macro_rules! mt_flush {
     () => {
-        $crate::INSTANCE
-            .get()
-            .map_or(
-                // If None is encountered, the logger has not been initialized, just return an error
-                Err($crate::MtLoggerError::LoggerNotInitialized),
-                // If instance is initialized, allow all messages to flush to output
-                |instance| {
-                    instance.flush()
-                }
-            )
+        $crate::INSTANCE.get().map_or(
+            // If None is encountered, the logger has not been initialized, just return an error
+            Err($crate::MtLoggerError::LoggerNotInitialized),
+            // If instance is initialized, allow all messages to flush to output
+            |instance| instance.flush(),
+        )
     };
 }
 
@@ -665,7 +661,10 @@ mod tests {
             let content_captures = content_regex.captures(content_line).unwrap_or_else(|| {
                 panic!(
                     "{:?}: Content line {} '{}' did not match content Regex:\n   {}",
-                    verf_type, i, content_line, content_regex.as_str()
+                    verf_type,
+                    i,
+                    content_line,
+                    content_regex.as_str()
                 )
             });
 
@@ -727,7 +726,7 @@ mod tests {
         // Capture the initial count
         let initial_msg_count = mt_count!();
         eprintln!("Initial message count: {}", initial_msg_count);
-        
+
         // Send some messages
         eprintln!("Sending messages...");
         let sent_msg_count = 5;
@@ -740,11 +739,11 @@ mod tests {
 
         // Send a flush command
         mt_flush!()?;
-        
+
         // Verify that all sent messages were processed after flushing
         eprintln!("Messages processed: {}", mt_count!());
         assert_eq!(initial_msg_count + sent_msg_count, mt_count!());
-        
+
         Ok(())
     }
 
