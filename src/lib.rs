@@ -377,10 +377,8 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::io::Read;
-    use std::sync::Mutex;
     use std::time;
 
-    use lazy_static::lazy_static;
     use regex::Regex;
 
     use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
@@ -389,10 +387,6 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn Error>>;
 
-
-    lazy_static! {
-        static ref LOGGER_MUTEX: Mutex<()> = Mutex::new(());
-    }
 
     #[derive(Debug, PartialEq)]
     enum VerfFile {
