@@ -25,7 +25,7 @@ Purpose:
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, SendError};
+use std::sync::mpsc::{self, RecvError, SendError};
 use std::sync::Arc;
 use std::thread;
 
@@ -85,6 +85,7 @@ pub enum Command {
     LogMsg(MsgTuple),
     SetOutputLevel(Level),
     SetOutputStream(OutputStream),
+    Flush(mpsc::Sender<()>),
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +101,7 @@ pub enum MtLoggerError {
 
     // Wrappers
     SendError(SendError<Command>),
+    RecvError(RecvError),
 }
 
 pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
@@ -112,6 +114,7 @@ pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 impl MtLogger {
     /// Fully-qualified constructor
     pub fn new(output_level: Level, output_stream: OutputStream) -> Self {
+        //OPT: Does this need to be a sync channel?
         // Create the log messaging and control channel
         let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
@@ -183,6 +186,19 @@ impl MtLogger {
             Ok(())
         }
     }
+
+    pub fn flush(&self) -> Result<(), MtLoggerError> {
+        // Create a channel that will be used to notify completion of the flush
+        let (flush_ack_tx, flush_ack_rx) = mpsc::channel::<()>();
+
+        // Send a flush command to the receiver thread
+        self.sender.send_cmd(Command::Flush(flush_ack_tx))?;
+
+        // Block until the the flush ACK arrives
+        flush_ack_rx.recv()?;
+
+        Ok(())
+    }
 }
 
 
@@ -232,6 +248,13 @@ impl fmt::Display for MtLoggerError {
                     send_err
                 )
             }
+            Self::RecvError(recv_err) => {
+                write!(
+                    f,
+                    "Encountered RecvError '{}' while performing a logger command",
+                    recv_err
+                )
+            }
         }
     }
 }
@@ -239,6 +262,11 @@ impl fmt::Display for MtLoggerError {
 impl From<SendError<Command>> for MtLoggerError {
     fn from(src: SendError<Command>) -> Self {
         Self::SendError(src)
+    }
+}
+impl From<RecvError> for MtLoggerError {
+    fn from(src: RecvError) -> Self {
+        Self::RecvError(src)
     }
 }
 
@@ -327,6 +355,18 @@ macro_rules! mt_count {
     }};
 }
 
+#[macro_export]
+macro_rules! mt_flush {
+    () => {
+        $crate::INSTANCE.get().map_or(
+            // If None is encountered, the logger has not been initialized, just return an error
+            Err($crate::MtLoggerError::LoggerNotInitialized),
+            // If instance is initialized, allow all messages to flush to output
+            |instance| instance.flush(),
+        )
+    };
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Unit Tests
@@ -337,31 +377,22 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::io::Read;
-    use std::sync::Mutex;
-    use std::thread;
     use std::time;
 
-    use lazy_static::lazy_static;
     use regex::Regex;
 
     use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
-    use crate::{Level, MtLogger, OutputStream, INSTANCE};
+    use crate::{Level, OutputStream};
 
 
     type TestResult = Result<(), Box<dyn Error>>;
 
-
-    lazy_static! {
-        static ref LOGGER_MUTEX: Mutex<()> = Mutex::new(());
-    }
 
     #[derive(Debug, PartialEq)]
     enum VerfFile {
         StdOut,
         FileOut,
     }
-
-    const SLEEP_INTERVAL_MS: u64 = 10;
 
     const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
     const STDOUT_COLOR_IDX: usize = 1;
@@ -513,19 +544,10 @@ mod tests {
         Ok(())
     }
 
-    #[test]
     fn format_verification() -> TestResult {
-        const MSG_COUNT: u64 = 6;
-
-        // Acquire logger mutex, will be released once the test function completes
-        let _mutex = LOGGER_MUTEX.lock()?;
-
-        // Create or update a logger instance that will log all messages to Both outputs
-        let logger = MtLogger::new(Level::Trace, OutputStream::Both);
-        if let Err(_) = INSTANCE.set(logger) {
-            mt_stream!(OutputStream::Both);
-            mt_level!(Level::Trace);
-        }
+        // Update logger instance such that all messages are logged to Both outputs
+        mt_stream!(OutputStream::Both);
+        mt_level!(Level::Trace);
 
         let first_line_num = line!() + 1;
         mt_log!(Level::Trace, "This is a TRACE message.");
@@ -535,13 +557,11 @@ mod tests {
         mt_log!(Level::Error, "This is an ERROR message.");
         mt_log!(Level::Fatal, "This is a FATAL message.");
 
-        // Sleep for to allow the receiver thread to do stuff
-        println!("Sleeping until all messages have been received...");
+        // Flush the messages to their output
+        println!("Flushing all messages to their output...");
         let start_time = time::Instant::now();
-        while mt_count!() < MSG_COUNT {
-            thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
-        }
-        println!("Done sleeping after {}ms", start_time.elapsed().as_millis());
+        mt_flush!()?;
+        println!("Done flushing after {}ms", start_time.elapsed().as_millis());
 
         // Verify that the verification files contain well-formatted messages
         format_verf_helper(VerfFile::StdOut, first_line_num)?;
@@ -550,7 +570,7 @@ mod tests {
         Ok(())
     }
 
-    fn output_type_helper(verf_type: VerfFile) -> TestResult {
+    fn outputstream_verf_helper(verf_type: VerfFile) -> TestResult {
         // Set up the verification items
         const VERF_MATRIX: [[[&str; 2]; 4]; 2] = [
             [
@@ -634,8 +654,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("Missing content line after header '{}'", header_line));
             let content_captures = content_regex.captures(content_line).unwrap_or_else(|| {
                 panic!(
-                    "{:?}: Content line {} '{}' did not match content Regex",
-                    verf_type, i, content_line
+                    "{:?}: Content line {} '{}' did not match content Regex:\n   {}",
+                    verf_type,
+                    i,
+                    content_line,
+                    content_regex.as_str()
                 )
             });
 
@@ -657,19 +680,10 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn output_type_cmd_test() -> TestResult {
-        const MSG_COUNT: u64 = 6;
-
-        // Acquire logger mutex, will be released once the test function completes
-        let _mutex = LOGGER_MUTEX.lock()?;
-
-        // Create or update a logger instance that will log all messages to Both outputs
-        let logger = MtLogger::new(Level::Trace, OutputStream::Both);
-        if let Err(_) = INSTANCE.set(logger) {
-            mt_stream!(OutputStream::Both);
-            mt_level!(Level::Trace);
-        }
+    fn outputstream_verification() -> TestResult {
+        // Update logger instance such that all messages are logged to Both outputs
+        mt_stream!(OutputStream::Both);
+        mt_level!(Level::Trace);
 
         mt_log!(Level::Trace, "This message appears in BOTH.");
         mt_log!(Level::Fatal, "This message appears in BOTH.");
@@ -689,17 +703,67 @@ mod tests {
         mt_log!(Level::Trace, "This message appears in NEITHER.");
         mt_log!(Level::Fatal, "This message appears in NEITHER.");
 
-        // Sleep to allow the receiver thread to do stuff
-        println!("Sleeping until all messages have been received...");
+        // Flush the messages to their output
+        println!("Flushing all messages to their output...");
         let start_time = time::Instant::now();
-        while mt_count!() < MSG_COUNT {
-            thread::sleep(time::Duration::from_millis(SLEEP_INTERVAL_MS));
-        }
-        println!("Done sleeping after {}ms", start_time.elapsed().as_millis());
+        mt_flush!()?;
+        println!("Done flushing after {}ms", start_time.elapsed().as_millis());
 
         // Verify that the verification files contain only the correct messages
-        output_type_helper(VerfFile::StdOut)?;
-        output_type_helper(VerfFile::FileOut)?;
+        outputstream_verf_helper(VerfFile::StdOut)?;
+        outputstream_verf_helper(VerfFile::FileOut)?;
+
+        Ok(())
+    }
+
+    fn flush_test() -> TestResult {
+        // Capture the initial count
+        let initial_msg_count = mt_count!();
+        eprintln!("Initial message count: {}", initial_msg_count);
+
+        // Send some messages
+        eprintln!("Sending messages...");
+        let sent_msg_count = 5;
+        for i in 0..sent_msg_count {
+            mt_log!(Level::Info, "Message #{}", i);
+        }
+
+        // Ensure that no messages have yet been processed
+        assert_eq!(initial_msg_count, mt_count!());
+
+        // Send a flush command
+        mt_flush!()?;
+
+        // Verify that all sent messages were processed after flushing
+        eprintln!("Messages processed: {}", mt_count!());
+        assert_eq!(initial_msg_count + sent_msg_count, mt_count!());
+
+        Ok(())
+    }
+
+    fn reset_verf_files() -> TestResult {
+        fs::write(STDOUT_FILENAME, "")?;
+        fs::write(FILE_OUT_FILENAME, "")?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn overlord() -> TestResult {
+        // Create the global instance to be used be all tests
+        mt_new!(Level::Info, OutputStream::Both);
+
+        // Run Format Verification
+        format_verification()?;
+        reset_verf_files()?;
+
+        // Run OutputStream Verification
+        outputstream_verification()?;
+        reset_verf_files()?;
+
+        // Run Flush Test
+        flush_test()?;
+        reset_verf_files()?;
 
         Ok(())
     }
