@@ -842,19 +842,19 @@ mod tests {
 
         // Run Format Verification
         format_verification()?;
-        // reset_verf_files()?;
+        reset_verf_files()?;
 
-        // // Run OutputStream Verification
-        // outputstream_verification()?;
-        // reset_verf_files()?;
+        // Run OutputStream Verification
+        outputstream_verification()?;
+        reset_verf_files()?;
 
-        // // Run Flush Test
-        // flush_test()?;
-        // reset_verf_files()?;
+        // Run Flush Test
+        flush_test()?;
+        reset_verf_files()?;
 
-        // // Run Latency Test
-        // timestamp_latency_test()?;
-        // reset_verf_files()?;
+        // Run Latency Test
+        timestamp_latency_test()?;
+        reset_verf_files()?;
 
         Ok(())
     }
