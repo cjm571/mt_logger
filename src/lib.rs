@@ -29,6 +29,8 @@ use std::sync::mpsc::{self, RecvError, SendError};
 use std::sync::Arc;
 use std::thread;
 
+use chrono::DateTime;
+use chrono::Local;
 use once_cell::sync::OnceCell;
 
 
@@ -67,6 +69,7 @@ pub enum Level {
 
 /// Tuple struct containing log message and its log level
 pub struct MsgTuple {
+    pub timestamp: DateTime<Local>,
     pub level: Level,
     pub fn_name: String,
     pub line: u32,
@@ -114,8 +117,8 @@ pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 impl MtLogger {
     /// Fully-qualified constructor
     pub fn new(output_level: Level, output_stream: OutputStream) -> Self {
-        //OPT: Does this need to be a sync channel?
         // Create the log messaging and control channel
+        // Must be a sync channel in order to wrap OnceCell around an MtLogger
         let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
         // Create the shared message count
@@ -168,6 +171,7 @@ impl MtLogger {
         // If logging is enabled, package log message into tuple and send
         if self.enabled {
             let log_tuple = MsgTuple {
+                timestamp: Local::now(),
                 level,
                 fn_name,
                 line,
@@ -379,9 +383,12 @@ mod tests {
     use std::io::Read;
     use std::time;
 
+    use chrono::Local;
+    use chrono::NaiveDateTime;
+
     use regex::Regex;
 
-    use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
+    use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME, TIMESTAMP_FORMAT};
     use crate::{Level, OutputStream};
 
 
@@ -394,7 +401,7 @@ mod tests {
         FileOut,
     }
 
-    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
+    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{9}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
     const STDOUT_COLOR_IDX: usize = 1;
     const STDOUT_PADDED_LEVEL_IDX: usize = 2;
     const STDOUT_PADLESS_LEVEL_IDX: usize = 3;
@@ -402,12 +409,19 @@ mod tests {
     const STDOUT_LINE_NUM_IDX: usize = 5;
 
     const FILE_OUT_HDR_REGEX_STR: &str =
-        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
+        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{9}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
     const FILE_OUT_PADDED_LEVEL_IDX: usize = 1;
     const FILE_OUT_PADLESS_LEVEL_IDX: usize = 2;
     const FILE_OUT_FN_NAME_IDX: usize = 3;
     const FILE_OUT_LINE_NUM_IDX: usize = 4;
 
+
+    fn reset_verf_files() -> TestResult {
+        fs::write(STDOUT_FILENAME, "")?;
+        fs::write(FILE_OUT_FILENAME, "")?;
+        
+        Ok(())
+    }
 
     fn format_verf_helper(verf_type: VerfFile, first_line_num: u32) -> TestResult {
         // Set up the verification items
@@ -721,15 +735,16 @@ mod tests {
         let initial_msg_count = mt_count!();
         eprintln!("Initial message count: {}", initial_msg_count);
 
+        // Set up the logger instance
+        mt_level!(Level::Info);
+        mt_stream!(OutputStream::StdOut);
+
         // Send some messages
         eprintln!("Sending messages...");
         let sent_msg_count = 5;
         for i in 0..sent_msg_count {
             mt_log!(Level::Info, "Message #{}", i);
         }
-
-        // Ensure that no messages have yet been processed
-        assert_eq!(initial_msg_count, mt_count!());
 
         // Send a flush command
         mt_flush!()?;
@@ -741,9 +756,81 @@ mod tests {
         Ok(())
     }
 
-    fn reset_verf_files() -> TestResult {
-        fs::write(STDOUT_FILENAME, "")?;
-        fs::write(FILE_OUT_FILENAME, "")?;
+    fn timestamp_latency_test() -> TestResult {
+        const ITERATIONS: usize = 100000;
+        const LATENCY_TOLERANCE_US: usize = 1000;
+        let mut true_timestamps: Vec<NaiveDateTime> = Vec::new();
+
+        // Create regex for message headers
+        let header_regex = Regex::new(r"^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{9}).*")?;
+
+        // Set up the logger instance
+        mt_level!(Level::Trace);
+        mt_stream!(OutputStream::Both);
+        
+        // Flush the log commands and take a dummy timestamp to reduce artificial 1st-message latency
+        mt_flush!()?;
+        let _dummy_timestamp = Local::now();
+
+        // Send a lot of messages, and grab a "truth" timestamp just before sending
+        for i in 0..ITERATIONS {
+            let true_timestamp = Local::now();
+            mt_log!(Level::Info, "Message #{}", i);
+            true_timestamps.push(true_timestamp.naive_local());
+        }
+        mt_flush!()?;
+
+        // Open verification file and read into vector by lines
+        let mut verf_file = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
+        let mut verf_string = String::new();
+        verf_file.read_to_string(&mut verf_string)?;
+
+        let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
+        let mut verf_line_iter = verf_lines.iter_mut();
+
+        // Iterate through lines and verify that timestamps are within acceptable tolerance
+        let mut i = 0;
+        let mut total_latency_us = 0;
+        let mut peak_latency_us = 0;
+        while let Some(header_line) = verf_line_iter.next().filter(|v| !v.is_empty()) {
+            let captured_timestamp = header_regex.captures(header_line).unwrap_or_else(|| {
+                panic!(
+                    "Header line {} '{}' did not match Regex:\n   {}",
+                    i,
+                    header_line,
+                    header_regex.as_str()
+                )
+            });
+
+            // eprintln!("True Timestamp #{}:      {}", i, true_timestamps.get(i).unwrap());
+            // eprintln!("Captured Timestamp #{}:  {}", i, &captured_timestamp[1]);
+
+            let parsed_datetime = NaiveDateTime::parse_from_str(&captured_timestamp[1], TIMESTAMP_FORMAT)?;
+            // eprintln!("Parsed Timestamp #{}:    {}", i, parsed_datetime);
+
+            let latency_us = parsed_datetime.signed_duration_since(*true_timestamps.get(i).unwrap()).num_microseconds().unwrap().abs() as usize;
+            // eprintln!("Timestamp Delta:         {}us\n", time_diff_us);
+
+            assert!(latency_us < LATENCY_TOLERANCE_US,
+                "Timestamp Latency on Message #{} was outside tolerance. {} > {}",
+                i,
+                latency_us,
+                LATENCY_TOLERANCE_US
+            );
+
+            // Add time diff to running stats
+            total_latency_us += latency_us;
+            if latency_us > peak_latency_us {
+                peak_latency_us = latency_us;
+            }
+
+            // Skip content line and increment line counter
+            verf_line_iter.next().unwrap_or_else(|| panic!("Missing content line after header '{}'", header_line));
+            i += 1;
+        }
+
+        eprintln!("Average Latency: {}us", total_latency_us as f64 / i as f64);
+        eprintln!("Peak Latency:    {}us", peak_latency_us);
 
         Ok(())
     }
@@ -755,15 +842,19 @@ mod tests {
 
         // Run Format Verification
         format_verification()?;
-        reset_verf_files()?;
+        // reset_verf_files()?;
 
-        // Run OutputStream Verification
-        outputstream_verification()?;
-        reset_verf_files()?;
+        // // Run OutputStream Verification
+        // outputstream_verification()?;
+        // reset_verf_files()?;
 
-        // Run Flush Test
-        flush_test()?;
-        reset_verf_files()?;
+        // // Run Flush Test
+        // flush_test()?;
+        // reset_verf_files()?;
+
+        // // Run Latency Test
+        // timestamp_latency_test()?;
+        // reset_verf_files()?;
 
         Ok(())
     }
