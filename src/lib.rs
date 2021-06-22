@@ -168,10 +168,11 @@ impl MtLogger {
         line: u32,
         msg: String,
     ) -> Result<(), SendError<Command>> {
+        let timestamp = Local::now();
         // If logging is enabled, package log message into tuple and send
         if self.enabled {
             let log_tuple = MsgTuple {
-                timestamp: Local::now(),
+                timestamp,
                 level,
                 fn_name,
                 line,
@@ -381,10 +382,13 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::io::Read;
+    use std::sync::Mutex;
     use std::time;
 
     use chrono::Local;
     use chrono::NaiveDateTime;
+    
+    use lazy_static::lazy_static;
 
     use regex::Regex;
 
@@ -393,6 +397,11 @@ mod tests {
 
 
     type TestResult = Result<(), Box<dyn Error>>;
+
+
+    lazy_static! {
+        static ref LOGGER_MUTEX: Mutex<()> = Mutex::new(());
+    }
 
 
     #[derive(Debug, PartialEq)]
@@ -423,7 +432,7 @@ mod tests {
         Ok(())
     }
 
-    fn format_verf_helper(verf_type: VerfFile, first_line_num: u32) -> TestResult {
+    fn format_verf_helper(verf_type: VerfFile, verf_string: String, first_line_num: u32) -> TestResult {
         // Set up the verification items
         const FN_NAME: &str = "mt_logger::tests::format_verification";
         const VERF_MATRIX: [[&str; 3]; 6] = [
@@ -439,21 +448,18 @@ mod tests {
         const PADDED_LEVEL_VERF_IDX: usize = 2;
 
         // Set up output-specific parameters
-        let filepath;
         let padded_level_hdr_capture_idx;
         let fn_name_hdr_capture_idx;
         let line_num_hdr_capture_idx;
         let header_regex;
         match verf_type {
             VerfFile::StdOut => {
-                filepath = STDOUT_FILENAME;
                 padded_level_hdr_capture_idx = STDOUT_PADDED_LEVEL_IDX;
                 fn_name_hdr_capture_idx = STDOUT_FN_NAME_IDX;
                 line_num_hdr_capture_idx = STDOUT_LINE_NUM_IDX;
                 header_regex = Regex::new(STDOUT_HDR_REGEX_STR)?;
             }
             VerfFile::FileOut => {
-                filepath = FILE_OUT_FILENAME;
                 padded_level_hdr_capture_idx = FILE_OUT_PADDED_LEVEL_IDX;
                 fn_name_hdr_capture_idx = FILE_OUT_FN_NAME_IDX;
                 line_num_hdr_capture_idx = FILE_OUT_LINE_NUM_IDX;
@@ -465,11 +471,7 @@ mod tests {
         // Create regex for message content
         let content_regex = Regex::new(r"^   This is an? (\w*) message.")?;
 
-        // Open verification file and read into vector by lines
-        let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
-        let mut verf_string = String::new();
-        verf_file.read_to_string(&mut verf_string)?;
-
+        // Read verf string into iterator
         let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
         let mut verf_line_iter = verf_lines.iter_mut();
 
@@ -559,6 +561,12 @@ mod tests {
     }
 
     fn format_verification() -> TestResult {
+        // Lock logger mutex and hold it until we're done processing messages
+        let mutex = LOGGER_MUTEX.lock()?;
+        
+        //FIXME: Necessary?
+        reset_verf_files()?;
+
         // Update logger instance such that all messages are logged to Both outputs
         mt_stream!(OutputStream::Both);
         mt_level!(Level::Trace);
@@ -577,14 +585,28 @@ mod tests {
         mt_flush!()?;
         println!("Done flushing after {}ms", start_time.elapsed().as_millis());
 
+        // Capture the files in memory before releasing the mutex
+        let mut verf_file_stdout = fs::OpenOptions::new().read(true).open(STDOUT_FILENAME)?;
+        let mut verf_string_stdout = String::new();
+        verf_file_stdout.read_to_string(&mut verf_string_stdout)?;
+        let mut verf_file_file_out = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
+        let mut verf_string_file_out = String::new();
+        verf_file_file_out.read_to_string(&mut verf_string_file_out)?;
+
+        //FIXME: Necessary?
+        reset_verf_files()?;
+
+        // Unlock the mutex
+        std::mem::drop(mutex);
+
         // Verify that the verification files contain well-formatted messages
-        format_verf_helper(VerfFile::StdOut, first_line_num)?;
-        format_verf_helper(VerfFile::FileOut, first_line_num)?;
+        format_verf_helper(VerfFile::StdOut, verf_string_stdout, first_line_num)?;
+        format_verf_helper(VerfFile::FileOut, verf_string_file_out, first_line_num)?;
 
         Ok(())
     }
 
-    fn outputstream_verf_helper(verf_type: VerfFile) -> TestResult {
+    fn outputstream_verf_helper(verf_type: VerfFile, verf_string: String) -> TestResult {
         // Set up the verification items
         const VERF_MATRIX: [[[&str; 2]; 4]; 2] = [
             [
@@ -606,19 +628,16 @@ mod tests {
         const OUTPUT_TYPE_VERF_IDX: usize = 1;
 
         // Set up output-specific parameters
-        let filepath;
         let verf_type_idx;
         let padless_level_hdr_capture_idx;
         let header_regex;
         match verf_type {
             VerfFile::StdOut => {
-                filepath = STDOUT_FILENAME;
                 verf_type_idx = STDOUT_TYPE_IDX;
                 padless_level_hdr_capture_idx = STDOUT_PADLESS_LEVEL_IDX;
                 header_regex = Regex::new(STDOUT_HDR_REGEX_STR)?;
             }
             VerfFile::FileOut => {
-                filepath = FILE_OUT_FILENAME;
                 verf_type_idx = FILE_OUT_TYPE_IDX;
                 padless_level_hdr_capture_idx = FILE_OUT_PADLESS_LEVEL_IDX;
                 header_regex = Regex::new(FILE_OUT_HDR_REGEX_STR)?;
@@ -629,11 +648,7 @@ mod tests {
         // Create regex for message content
         let content_regex = Regex::new(r"^\s*This message appears in (\w*).")?;
 
-        // Open verification file and read into vector by lines
-        let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
-        let mut verf_string = String::new();
-        verf_file.read_to_string(&mut verf_string)?;
-
+        // Read verf string into iterator
         let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
         let mut verf_line_iter = verf_lines.iter_mut();
 
@@ -695,6 +710,12 @@ mod tests {
     }
 
     fn outputstream_verification() -> TestResult {
+        // Lock logger mutex and hold it until we're done processing messages
+        let mutex = LOGGER_MUTEX.lock()?;
+        
+        //FIXME: Necessary?
+        reset_verf_files()?;
+
         // Update logger instance such that all messages are logged to Both outputs
         mt_stream!(OutputStream::Both);
         mt_level!(Level::Trace);
@@ -721,11 +742,25 @@ mod tests {
         println!("Flushing all messages to their output...");
         let start_time = time::Instant::now();
         mt_flush!()?;
-        println!("Done flushing after {}ms", start_time.elapsed().as_millis());
+        println!("Done flushing after {}ms", start_time.elapsed().as_millis());        
+
+        // Capture the files in memory before releasing the mutex
+        let mut verf_file_stdout = fs::OpenOptions::new().read(true).open(STDOUT_FILENAME)?;
+        let mut verf_string_stdout = String::new();
+        verf_file_stdout.read_to_string(&mut verf_string_stdout)?;
+        let mut verf_file_file_out = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
+        let mut verf_string_file_out = String::new();
+        verf_file_file_out.read_to_string(&mut verf_string_file_out)?;
+        
+        //FIXME: Necessary?
+        reset_verf_files()?;
+
+        // Unlock the mutex
+        std::mem::drop(mutex);
 
         // Verify that the verification files contain only the correct messages
-        outputstream_verf_helper(VerfFile::StdOut)?;
-        outputstream_verf_helper(VerfFile::FileOut)?;
+        outputstream_verf_helper(VerfFile::StdOut, verf_string_stdout)?;
+        outputstream_verf_helper(VerfFile::FileOut, verf_string_file_out)?;
 
         Ok(())
     }
@@ -734,6 +769,9 @@ mod tests {
         // Capture the initial count
         let initial_msg_count = mt_count!();
         eprintln!("Initial message count: {}", initial_msg_count);
+
+        // Lock logger mutex and hold it for the remainder of this test
+        let _mutex = LOGGER_MUTEX.lock()?;
 
         // Set up the logger instance
         mt_level!(Level::Info);
@@ -755,14 +793,21 @@ mod tests {
 
         Ok(())
     }
-
+    
+    #[test]
     fn timestamp_latency_test() -> TestResult {
-        const ITERATIONS: usize = 100000;
+        const ITERATIONS: usize = 10000;
         const LATENCY_TOLERANCE_US: usize = 1000;
         let mut true_timestamps: Vec<NaiveDateTime> = Vec::new();
 
         // Create regex for message headers
         let header_regex = Regex::new(r"^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{9}).*")?;
+
+        // Lock logger mutex and hold it until we're done processing messages
+        let mutex = LOGGER_MUTEX.lock()?;
+        
+        //FIXME: Necessary?
+        reset_verf_files()?;
 
         // Set up the logger instance
         mt_level!(Level::Trace);
@@ -784,6 +829,12 @@ mod tests {
         let mut verf_file = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
         let mut verf_string = String::new();
         verf_file.read_to_string(&mut verf_string)?;
+        
+        //FIXME: Necessary?
+        reset_verf_files()?;
+
+        // Unlock the mutex
+        std::mem::drop(mutex);
 
         let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
         let mut verf_line_iter = verf_lines.iter_mut();
@@ -842,19 +893,12 @@ mod tests {
 
         // Run Format Verification
         format_verification()?;
-        reset_verf_files()?;
 
         // Run OutputStream Verification
         outputstream_verification()?;
-        reset_verf_files()?;
 
         // Run Flush Test
         flush_test()?;
-        reset_verf_files()?;
-
-        // Run Latency Test
-        timestamp_latency_test()?;
-        reset_verf_files()?;
 
         Ok(())
     }
