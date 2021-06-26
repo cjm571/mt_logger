@@ -163,12 +163,12 @@ impl MtLogger {
     //FEAT: Bring filtering back to the sending-side
     pub fn log_msg(
         &self,
+        timestamp: DateTime<Local>,
         level: Level,
         fn_name: String,
         line: u32,
         msg: String,
     ) -> Result<(), SendError<Command>> {
-        let timestamp = Local::now();
         // If logging is enabled, package log message into tuple and send
         if self.enabled {
             let log_tuple = MsgTuple {
@@ -294,6 +294,10 @@ macro_rules! mt_new {
 #[macro_export]
 macro_rules! mt_log {
     ($log_level:expr, $( $fmt_args:expr ),*) => {{
+        // Take the timestamp first for highest accuracy
+        let timestamp = Local::now();
+
+        // Capture fully-qualified function name
         let fn_name = {
             fn f() {}
             fn type_name_of<T>(_: T) -> &'static str {
@@ -309,6 +313,7 @@ macro_rules! mt_log {
             .get()
             // If None is encountered, the logger has not been initialized, so do nothing
             .and_then(|instance| instance.log_msg(
+                timestamp,
                 $log_level,
                 fn_name.to_string(),
                 line!(),
@@ -386,14 +391,13 @@ mod tests {
     use std::time;
 
     use chrono::Local;
-    use chrono::NaiveDateTime;
-    
+
     use lazy_static::lazy_static;
 
     use regex::Regex;
 
-    use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME, TIMESTAMP_FORMAT};
-    use crate::{Level, OutputStream};
+    use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
+    use crate::{Level, OutputStream, INSTANCE};
 
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -428,11 +432,15 @@ mod tests {
     fn reset_verf_files() -> TestResult {
         fs::write(STDOUT_FILENAME, "")?;
         fs::write(FILE_OUT_FILENAME, "")?;
-        
+
         Ok(())
     }
 
-    fn format_verf_helper(verf_type: VerfFile, verf_string: String, first_line_num: u32) -> TestResult {
+    fn format_verf_helper(
+        verf_type: VerfFile,
+        verf_string: String,
+        first_line_num: u32,
+    ) -> TestResult {
         // Set up the verification items
         const FN_NAME: &str = "mt_logger::tests::format_verification";
         const VERF_MATRIX: [[&str; 3]; 6] = [
@@ -560,16 +568,21 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn format_verification() -> TestResult {
         // Lock logger mutex and hold it until we're done processing messages
         let mutex = LOGGER_MUTEX.lock()?;
-        
-        //FIXME: Necessary?
+
+        // Clean verification files before test
         reset_verf_files()?;
 
-        // Update logger instance such that all messages are logged to Both outputs
-        mt_stream!(OutputStream::Both);
-        mt_level!(Level::Trace);
+        // Create or update logger instance such that all messages are logged to Both outputs
+        if INSTANCE.get().is_none() {
+            mt_new!(Level::Trace, OutputStream::Both);
+        } else {
+            mt_level!(Level::Trace);
+            mt_stream!(OutputStream::Both);
+        }
 
         let first_line_num = line!() + 1;
         mt_log!(Level::Trace, "This is a TRACE message.");
@@ -592,9 +605,6 @@ mod tests {
         let mut verf_file_file_out = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
         let mut verf_string_file_out = String::new();
         verf_file_file_out.read_to_string(&mut verf_string_file_out)?;
-
-        //FIXME: Necessary?
-        reset_verf_files()?;
 
         // Unlock the mutex
         std::mem::drop(mutex);
@@ -709,16 +719,21 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn outputstream_verification() -> TestResult {
         // Lock logger mutex and hold it until we're done processing messages
         let mutex = LOGGER_MUTEX.lock()?;
-        
-        //FIXME: Necessary?
+
+        // Clean verification files before test
         reset_verf_files()?;
 
-        // Update logger instance such that all messages are logged to Both outputs
-        mt_stream!(OutputStream::Both);
-        mt_level!(Level::Trace);
+        // Create or update logger instance such that all messages are logged to Both outputs
+        if INSTANCE.get().is_none() {
+            mt_new!(Level::Trace, OutputStream::Both);
+        } else {
+            mt_level!(Level::Trace);
+            mt_stream!(OutputStream::Both);
+        }
 
         mt_log!(Level::Trace, "This message appears in BOTH.");
         mt_log!(Level::Fatal, "This message appears in BOTH.");
@@ -742,7 +757,7 @@ mod tests {
         println!("Flushing all messages to their output...");
         let start_time = time::Instant::now();
         mt_flush!()?;
-        println!("Done flushing after {}ms", start_time.elapsed().as_millis());        
+        println!("Done flushing after {}ms", start_time.elapsed().as_millis());
 
         // Capture the files in memory before releasing the mutex
         let mut verf_file_stdout = fs::OpenOptions::new().read(true).open(STDOUT_FILENAME)?;
@@ -751,9 +766,6 @@ mod tests {
         let mut verf_file_file_out = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
         let mut verf_string_file_out = String::new();
         verf_file_file_out.read_to_string(&mut verf_string_file_out)?;
-        
-        //FIXME: Necessary?
-        reset_verf_files()?;
 
         // Unlock the mutex
         std::mem::drop(mutex);
@@ -765,17 +777,25 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn flush_test() -> TestResult {
-        // Capture the initial count
-        let initial_msg_count = mt_count!();
-        eprintln!("Initial message count: {}", initial_msg_count);
-
         // Lock logger mutex and hold it for the remainder of this test
         let _mutex = LOGGER_MUTEX.lock()?;
 
+        // Clean verification files before test
+        reset_verf_files()?;
+
         // Set up the logger instance
-        mt_level!(Level::Info);
-        mt_stream!(OutputStream::StdOut);
+        if INSTANCE.get().is_none() {
+            mt_new!(Level::Info, OutputStream::StdOut);
+        } else {
+            mt_level!(Level::Info);
+            mt_stream!(OutputStream::StdOut);
+        }
+
+        // Capture the initial count
+        let initial_msg_count = mt_count!();
+        eprintln!("Initial message count: {}", initial_msg_count);
 
         // Send some messages
         eprintln!("Sending messages...");
@@ -790,115 +810,6 @@ mod tests {
         // Verify that all sent messages were processed after flushing
         eprintln!("Messages processed: {}", mt_count!());
         assert_eq!(initial_msg_count + sent_msg_count, mt_count!());
-
-        Ok(())
-    }
-    
-    #[test]
-    fn timestamp_latency_test() -> TestResult {
-        const ITERATIONS: usize = 10000;
-        const LATENCY_TOLERANCE_US: usize = 1000;
-        let mut true_timestamps: Vec<NaiveDateTime> = Vec::new();
-
-        // Create regex for message headers
-        let header_regex = Regex::new(r"^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{9}).*")?;
-
-        // Lock logger mutex and hold it until we're done processing messages
-        let mutex = LOGGER_MUTEX.lock()?;
-        
-        //FIXME: Necessary?
-        reset_verf_files()?;
-
-        // Set up the logger instance
-        mt_level!(Level::Trace);
-        mt_stream!(OutputStream::Both);
-        
-        // Flush the log commands and take a dummy timestamp to reduce artificial 1st-message latency
-        mt_flush!()?;
-        let _dummy_timestamp = Local::now();
-
-        // Send a lot of messages, and grab a "truth" timestamp just before sending
-        for i in 0..ITERATIONS {
-            let true_timestamp = Local::now();
-            mt_log!(Level::Info, "Message #{}", i);
-            true_timestamps.push(true_timestamp.naive_local());
-        }
-        mt_flush!()?;
-
-        // Open verification file and read into vector by lines
-        let mut verf_file = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
-        let mut verf_string = String::new();
-        verf_file.read_to_string(&mut verf_string)?;
-        
-        //FIXME: Necessary?
-        reset_verf_files()?;
-
-        // Unlock the mutex
-        std::mem::drop(mutex);
-
-        let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
-        let mut verf_line_iter = verf_lines.iter_mut();
-
-        // Iterate through lines and verify that timestamps are within acceptable tolerance
-        let mut i = 0;
-        let mut total_latency_us = 0;
-        let mut peak_latency_us = 0;
-        while let Some(header_line) = verf_line_iter.next().filter(|v| !v.is_empty()) {
-            let captured_timestamp = header_regex.captures(header_line).unwrap_or_else(|| {
-                panic!(
-                    "Header line {} '{}' did not match Regex:\n   {}",
-                    i,
-                    header_line,
-                    header_regex.as_str()
-                )
-            });
-
-            // eprintln!("True Timestamp #{}:      {}", i, true_timestamps.get(i).unwrap());
-            // eprintln!("Captured Timestamp #{}:  {}", i, &captured_timestamp[1]);
-
-            let parsed_datetime = NaiveDateTime::parse_from_str(&captured_timestamp[1], TIMESTAMP_FORMAT)?;
-            // eprintln!("Parsed Timestamp #{}:    {}", i, parsed_datetime);
-
-            let latency_us = parsed_datetime.signed_duration_since(*true_timestamps.get(i).unwrap()).num_microseconds().unwrap().abs() as usize;
-            // eprintln!("Timestamp Delta:         {}us\n", time_diff_us);
-
-            assert!(latency_us < LATENCY_TOLERANCE_US,
-                "Timestamp Latency on Message #{} was outside tolerance. {} > {}",
-                i,
-                latency_us,
-                LATENCY_TOLERANCE_US
-            );
-
-            // Add time diff to running stats
-            total_latency_us += latency_us;
-            if latency_us > peak_latency_us {
-                peak_latency_us = latency_us;
-            }
-
-            // Skip content line and increment line counter
-            verf_line_iter.next().unwrap_or_else(|| panic!("Missing content line after header '{}'", header_line));
-            i += 1;
-        }
-
-        eprintln!("Average Latency: {}us", total_latency_us as f64 / i as f64);
-        eprintln!("Peak Latency:    {}us", peak_latency_us);
-
-        Ok(())
-    }
-
-    #[test]
-    fn overlord() -> TestResult {
-        // Create the global instance to be used be all tests
-        mt_new!(Level::Info, OutputStream::Both);
-
-        // Run Format Verification
-        format_verification()?;
-
-        // Run OutputStream Verification
-        outputstream_verification()?;
-
-        // Run Flush Test
-        flush_test()?;
 
         Ok(())
     }
