@@ -29,6 +29,8 @@ use std::sync::mpsc::{self, RecvError, SendError};
 use std::sync::Arc;
 use std::thread;
 
+use chrono::DateTime;
+use chrono::Local;
 use once_cell::sync::OnceCell;
 
 
@@ -67,6 +69,7 @@ pub enum Level {
 
 /// Tuple struct containing log message and its log level
 pub struct MsgTuple {
+    pub timestamp: DateTime<Local>,
     pub level: Level,
     pub fn_name: String,
     pub line: u32,
@@ -114,8 +117,8 @@ pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 impl MtLogger {
     /// Fully-qualified constructor
     pub fn new(output_level: Level, output_stream: OutputStream) -> Self {
-        //OPT: Does this need to be a sync channel?
         // Create the log messaging and control channel
+        // Must be a sync channel in order to wrap OnceCell around an MtLogger
         let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
 
         // Create the shared message count
@@ -160,6 +163,7 @@ impl MtLogger {
     //FEAT: Bring filtering back to the sending-side
     pub fn log_msg(
         &self,
+        timestamp: DateTime<Local>,
         level: Level,
         fn_name: String,
         line: u32,
@@ -168,6 +172,7 @@ impl MtLogger {
         // If logging is enabled, package log message into tuple and send
         if self.enabled {
             let log_tuple = MsgTuple {
+                timestamp,
                 level,
                 fn_name,
                 line,
@@ -289,6 +294,10 @@ macro_rules! mt_new {
 #[macro_export]
 macro_rules! mt_log {
     ($log_level:expr, $( $fmt_args:expr ),*) => {{
+        // Take the timestamp first for highest accuracy
+        let timestamp = Local::now();
+
+        // Capture fully-qualified function name
         let fn_name = {
             fn f() {}
             fn type_name_of<T>(_: T) -> &'static str {
@@ -304,6 +313,7 @@ macro_rules! mt_log {
             .get()
             // If None is encountered, the logger has not been initialized, so do nothing
             .and_then(|instance| instance.log_msg(
+                timestamp,
                 $log_level,
                 fn_name.to_string(),
                 line!(),
@@ -377,15 +387,25 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::io::Read;
+    use std::sync::Mutex;
     use std::time;
+
+    use chrono::Local;
+
+    use lazy_static::lazy_static;
 
     use regex::Regex;
 
     use crate::receiver::{FILE_OUT_FILENAME, STDOUT_FILENAME};
-    use crate::{Level, OutputStream};
+    use crate::{Level, OutputStream, INSTANCE};
 
 
     type TestResult = Result<(), Box<dyn Error>>;
+
+
+    lazy_static! {
+        static ref LOGGER_MUTEX: Mutex<()> = Mutex::new(());
+    }
 
 
     #[derive(Debug, PartialEq)]
@@ -394,7 +414,7 @@ mod tests {
         FileOut,
     }
 
-    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
+    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{9}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
     const STDOUT_COLOR_IDX: usize = 1;
     const STDOUT_PADDED_LEVEL_IDX: usize = 2;
     const STDOUT_PADLESS_LEVEL_IDX: usize = 3;
@@ -402,14 +422,25 @@ mod tests {
     const STDOUT_LINE_NUM_IDX: usize = 5;
 
     const FILE_OUT_HDR_REGEX_STR: &str =
-        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
+        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{9}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
     const FILE_OUT_PADDED_LEVEL_IDX: usize = 1;
     const FILE_OUT_PADLESS_LEVEL_IDX: usize = 2;
     const FILE_OUT_FN_NAME_IDX: usize = 3;
     const FILE_OUT_LINE_NUM_IDX: usize = 4;
 
 
-    fn format_verf_helper(verf_type: VerfFile, first_line_num: u32) -> TestResult {
+    fn reset_verf_files() -> TestResult {
+        fs::write(STDOUT_FILENAME, "")?;
+        fs::write(FILE_OUT_FILENAME, "")?;
+
+        Ok(())
+    }
+
+    fn format_verf_helper(
+        verf_type: VerfFile,
+        verf_string: String,
+        first_line_num: u32,
+    ) -> TestResult {
         // Set up the verification items
         const FN_NAME: &str = "mt_logger::tests::format_verification";
         const VERF_MATRIX: [[&str; 3]; 6] = [
@@ -425,21 +456,18 @@ mod tests {
         const PADDED_LEVEL_VERF_IDX: usize = 2;
 
         // Set up output-specific parameters
-        let filepath;
         let padded_level_hdr_capture_idx;
         let fn_name_hdr_capture_idx;
         let line_num_hdr_capture_idx;
         let header_regex;
         match verf_type {
             VerfFile::StdOut => {
-                filepath = STDOUT_FILENAME;
                 padded_level_hdr_capture_idx = STDOUT_PADDED_LEVEL_IDX;
                 fn_name_hdr_capture_idx = STDOUT_FN_NAME_IDX;
                 line_num_hdr_capture_idx = STDOUT_LINE_NUM_IDX;
                 header_regex = Regex::new(STDOUT_HDR_REGEX_STR)?;
             }
             VerfFile::FileOut => {
-                filepath = FILE_OUT_FILENAME;
                 padded_level_hdr_capture_idx = FILE_OUT_PADDED_LEVEL_IDX;
                 fn_name_hdr_capture_idx = FILE_OUT_FN_NAME_IDX;
                 line_num_hdr_capture_idx = FILE_OUT_LINE_NUM_IDX;
@@ -451,11 +479,7 @@ mod tests {
         // Create regex for message content
         let content_regex = Regex::new(r"^   This is an? (\w*) message.")?;
 
-        // Open verification file and read into vector by lines
-        let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
-        let mut verf_string = String::new();
-        verf_file.read_to_string(&mut verf_string)?;
-
+        // Read verf string into iterator
         let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
         let mut verf_line_iter = verf_lines.iter_mut();
 
@@ -544,10 +568,21 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn format_verification() -> TestResult {
-        // Update logger instance such that all messages are logged to Both outputs
-        mt_stream!(OutputStream::Both);
-        mt_level!(Level::Trace);
+        // Lock logger mutex and hold it until we're done processing messages
+        let mutex = LOGGER_MUTEX.lock()?;
+
+        // Clean verification files before test
+        reset_verf_files()?;
+
+        // Create or update logger instance such that all messages are logged to Both outputs
+        if INSTANCE.get().is_none() {
+            mt_new!(Level::Trace, OutputStream::Both);
+        } else {
+            mt_level!(Level::Trace);
+            mt_stream!(OutputStream::Both);
+        }
 
         let first_line_num = line!() + 1;
         mt_log!(Level::Trace, "This is a TRACE message.");
@@ -563,14 +598,25 @@ mod tests {
         mt_flush!()?;
         println!("Done flushing after {}ms", start_time.elapsed().as_millis());
 
+        // Capture the files in memory before releasing the mutex
+        let mut verf_file_stdout = fs::OpenOptions::new().read(true).open(STDOUT_FILENAME)?;
+        let mut verf_string_stdout = String::new();
+        verf_file_stdout.read_to_string(&mut verf_string_stdout)?;
+        let mut verf_file_file_out = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
+        let mut verf_string_file_out = String::new();
+        verf_file_file_out.read_to_string(&mut verf_string_file_out)?;
+
+        // Unlock the mutex
+        std::mem::drop(mutex);
+
         // Verify that the verification files contain well-formatted messages
-        format_verf_helper(VerfFile::StdOut, first_line_num)?;
-        format_verf_helper(VerfFile::FileOut, first_line_num)?;
+        format_verf_helper(VerfFile::StdOut, verf_string_stdout, first_line_num)?;
+        format_verf_helper(VerfFile::FileOut, verf_string_file_out, first_line_num)?;
 
         Ok(())
     }
 
-    fn outputstream_verf_helper(verf_type: VerfFile) -> TestResult {
+    fn outputstream_verf_helper(verf_type: VerfFile, verf_string: String) -> TestResult {
         // Set up the verification items
         const VERF_MATRIX: [[[&str; 2]; 4]; 2] = [
             [
@@ -592,19 +638,16 @@ mod tests {
         const OUTPUT_TYPE_VERF_IDX: usize = 1;
 
         // Set up output-specific parameters
-        let filepath;
         let verf_type_idx;
         let padless_level_hdr_capture_idx;
         let header_regex;
         match verf_type {
             VerfFile::StdOut => {
-                filepath = STDOUT_FILENAME;
                 verf_type_idx = STDOUT_TYPE_IDX;
                 padless_level_hdr_capture_idx = STDOUT_PADLESS_LEVEL_IDX;
                 header_regex = Regex::new(STDOUT_HDR_REGEX_STR)?;
             }
             VerfFile::FileOut => {
-                filepath = FILE_OUT_FILENAME;
                 verf_type_idx = FILE_OUT_TYPE_IDX;
                 padless_level_hdr_capture_idx = FILE_OUT_PADLESS_LEVEL_IDX;
                 header_regex = Regex::new(FILE_OUT_HDR_REGEX_STR)?;
@@ -615,11 +658,7 @@ mod tests {
         // Create regex for message content
         let content_regex = Regex::new(r"^\s*This message appears in (\w*).")?;
 
-        // Open verification file and read into vector by lines
-        let mut verf_file = fs::OpenOptions::new().read(true).open(filepath)?;
-        let mut verf_string = String::new();
-        verf_file.read_to_string(&mut verf_string)?;
-
+        // Read verf string into iterator
         let mut verf_lines: Vec<&str> = verf_string.split('\n').collect();
         let mut verf_line_iter = verf_lines.iter_mut();
 
@@ -680,10 +719,21 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn outputstream_verification() -> TestResult {
-        // Update logger instance such that all messages are logged to Both outputs
-        mt_stream!(OutputStream::Both);
-        mt_level!(Level::Trace);
+        // Lock logger mutex and hold it until we're done processing messages
+        let mutex = LOGGER_MUTEX.lock()?;
+
+        // Clean verification files before test
+        reset_verf_files()?;
+
+        // Create or update logger instance such that all messages are logged to Both outputs
+        if INSTANCE.get().is_none() {
+            mt_new!(Level::Trace, OutputStream::Both);
+        } else {
+            mt_level!(Level::Trace);
+            mt_stream!(OutputStream::Both);
+        }
 
         mt_log!(Level::Trace, "This message appears in BOTH.");
         mt_log!(Level::Fatal, "This message appears in BOTH.");
@@ -709,14 +759,40 @@ mod tests {
         mt_flush!()?;
         println!("Done flushing after {}ms", start_time.elapsed().as_millis());
 
+        // Capture the files in memory before releasing the mutex
+        let mut verf_file_stdout = fs::OpenOptions::new().read(true).open(STDOUT_FILENAME)?;
+        let mut verf_string_stdout = String::new();
+        verf_file_stdout.read_to_string(&mut verf_string_stdout)?;
+        let mut verf_file_file_out = fs::OpenOptions::new().read(true).open(FILE_OUT_FILENAME)?;
+        let mut verf_string_file_out = String::new();
+        verf_file_file_out.read_to_string(&mut verf_string_file_out)?;
+
+        // Unlock the mutex
+        std::mem::drop(mutex);
+
         // Verify that the verification files contain only the correct messages
-        outputstream_verf_helper(VerfFile::StdOut)?;
-        outputstream_verf_helper(VerfFile::FileOut)?;
+        outputstream_verf_helper(VerfFile::StdOut, verf_string_stdout)?;
+        outputstream_verf_helper(VerfFile::FileOut, verf_string_file_out)?;
 
         Ok(())
     }
 
+    #[test]
     fn flush_test() -> TestResult {
+        // Lock logger mutex and hold it for the remainder of this test
+        let _mutex = LOGGER_MUTEX.lock()?;
+
+        // Clean verification files before test
+        reset_verf_files()?;
+
+        // Set up the logger instance
+        if INSTANCE.get().is_none() {
+            mt_new!(Level::Info, OutputStream::StdOut);
+        } else {
+            mt_level!(Level::Info);
+            mt_stream!(OutputStream::StdOut);
+        }
+
         // Capture the initial count
         let initial_msg_count = mt_count!();
         eprintln!("Initial message count: {}", initial_msg_count);
@@ -728,42 +804,12 @@ mod tests {
             mt_log!(Level::Info, "Message #{}", i);
         }
 
-        // Ensure that no messages have yet been processed
-        assert_eq!(initial_msg_count, mt_count!());
-
         // Send a flush command
         mt_flush!()?;
 
         // Verify that all sent messages were processed after flushing
         eprintln!("Messages processed: {}", mt_count!());
         assert_eq!(initial_msg_count + sent_msg_count, mt_count!());
-
-        Ok(())
-    }
-
-    fn reset_verf_files() -> TestResult {
-        fs::write(STDOUT_FILENAME, "")?;
-        fs::write(FILE_OUT_FILENAME, "")?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn overlord() -> TestResult {
-        // Create the global instance to be used be all tests
-        mt_new!(Level::Info, OutputStream::Both);
-
-        // Run Format Verification
-        format_verification()?;
-        reset_verf_files()?;
-
-        // Run OutputStream Verification
-        outputstream_verification()?;
-        reset_verf_files()?;
-
-        // Run Flush Test
-        flush_test()?;
-        reset_verf_files()?;
 
         Ok(())
     }

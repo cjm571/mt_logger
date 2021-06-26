@@ -3,7 +3,7 @@
 `mt_logger` is a multithreaded Rust logging library focused on traceability and ease-of-use via macros. Due to the nature of multithreading, it is best used in long-running programs with frequent or regular yields, such as web servers or game engines.
 
 Logs are stored in a `logs` directory inside the current working directory when a program is launched. The directory will be created if it does not already exist. Log file names follow the format
-`mt_log_YYYY-MM-DD_HH_MM_SS.ssss.log`
+`mt_log_YYYY-MM-DD_HH_MM_SS.sss.log`
 
 At initialization, a thread is created to receive log messages and commands from the main thread. Timestamps are set before sending in order to maintain complete traceability.
 
@@ -40,4 +40,25 @@ fn main() {
     let msg_count = mt_count!();
     println!("Messages logged: {}", msg_count);
 }
+```
+
+## Sample Output
+
+### Console
+![](res/console_output_sample.png)
+
+### File
+```
+2021-06-21 23:58:01.242087900: [  TRACE  ] mt_logger::tests::format_verification() line 567:
+   This is a TRACE message.
+2021-06-21 23:58:01.242918100: [  DEBUG  ] mt_logger::tests::format_verification() line 568:
+   This is a DEBUG message.
+2021-06-21 23:58:01.242931700: [  INFO   ] mt_logger::tests::format_verification() line 569:
+   This is an INFO message.
+2021-06-21 23:58:01.242939600: [ WARNING ] mt_logger::tests::format_verification() line 570:
+   This is a WARNING message.
+2021-06-21 23:58:01.242948000: [  ERROR  ] mt_logger::tests::format_verification() line 571:
+   This is an ERROR message.
+2021-06-21 23:58:01.242954100: [  FATAL  ] mt_logger::tests::format_verification() line 572:
+   This is a FATAL message.
 ```

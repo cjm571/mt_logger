@@ -28,7 +28,6 @@ use std::io::prelude::*;
 use std::path::PathBuf;
 
 use chrono::Local;
-use chrono::format::{DelayedFormat, StrftimeItems};
 
 use crate::{Command, Level, MsgTuple, OutputStream};
 
@@ -36,6 +35,12 @@ use crate::{Command, Level, MsgTuple, OutputStream};
 ///////////////////////////////////////////////////////////////////////////////
 //  Named Constants
 ///////////////////////////////////////////////////////////////////////////////
+
+/// Format string for timestamps
+#[cfg(not(test))]
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %T%.9f";
+#[cfg(test)]
+pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %T%.9f";
 
 /// Padding required to align text after Level label
 const LEVEL_LABEL_WIDTH: usize = 9;
@@ -91,7 +96,7 @@ impl Receiver {
         let start_time = Local::now();
         println!(
             "{}: Entered LogReceiver thread.",
-            start_time.format("%Y-%m-%d %T%.3f")
+            start_time.format(TIMESTAMP_FORMAT)
         );
 
         // Open a logfile, creating logs directory if necessary
@@ -141,13 +146,11 @@ impl Receiver {
         loop {
             // Check the channel for commands
             if let Ok(logger_cmd) = self.logger_rx.recv() {
-                let timestamp = Local::now().format("%Y-%m-%d %T%.3f");
-
                 // Handle command based on type
                 match logger_cmd {
                     /* Messages */
                     Command::LogMsg(log_tuple) => {
-                        self.record_msg(&mut logfile, timestamp, log_tuple)
+                        self.record_msg(&mut logfile, log_tuple)
                     }
 
                     /* Configuration Commands */
@@ -167,13 +170,14 @@ impl Receiver {
                         if let Err(e) = flush_ack_tx.send(()) {
                             // Write an error into the log so we know something went wrong
                             let err_tuple = MsgTuple {
+                                timestamp: Local::now(),
                                 level: Level::Error,
                                 fn_name: "LOG_RECEIVER_FLUSH_COMMAND".to_string(),
                                 line: line!(),
                                 msg: format!("Encountered SendError '{}' when sending flush ACK message.", e),
                             };
 
-                            self.record_msg(&mut logfile, timestamp, err_tuple);
+                            self.record_msg(&mut logfile, err_tuple);
                         }
                     }
                 };
@@ -186,7 +190,10 @@ impl Receiver {
      * Helper Methods *
     \*  *  *  *  *  *  */
 
-    fn record_msg(&mut self, logfile: &mut File, timestamp: DelayedFormat<StrftimeItems>, log_tuple: MsgTuple) {
+    fn record_msg(&mut self, logfile: &mut File, log_tuple: MsgTuple) {
+        // Format the timestamp for recording
+        let formatted_timestamp = log_tuple.timestamp.format(TIMESTAMP_FORMAT);
+
         if log_tuple.level >= self.output_level {
             // Console output
             if self.output_stream as u8 & OutputStream::StdOut as u8 != 0 {
@@ -200,7 +207,7 @@ impl Receiver {
                 };
                 let msg_formatted = format!(
                     "{timestamp}: {color_set}[{level:^level_width$}]\x1b[0m {fn_name}() line {line}:\n{msg:>msg_leftpad$}",
-                    timestamp   = timestamp,
+                    timestamp   = formatted_timestamp,
                     color_set   = log_color,
                     level       = log_tuple.level.to_string(),
                     level_width = LEVEL_LABEL_WIDTH,
@@ -234,7 +241,7 @@ impl Receiver {
             if self.output_stream as u8 & OutputStream::File as u8 != 0 {
                 let msg_formatted = format!(
                     "{timestamp}: [{level:^level_width$}] {fn_name}() line {line}:\n{msg:>msg_leftpad$}\n",
-                    timestamp   = timestamp,
+                    timestamp   = formatted_timestamp,
                     level       = log_tuple.level.to_string(),
                     level_width = LEVEL_LABEL_WIDTH,
                     fn_name     = log_tuple.fn_name,
@@ -246,7 +253,7 @@ impl Receiver {
                 //FEAT: Avoid spewing the same error if a file explodes or something
                 logfile.write_all(msg_formatted.as_bytes())
                     .unwrap_or_else(
-                        |err| eprintln!("{}: Encountered error '{}' while attempting to write to log file.", timestamp, err)
+                        |err| eprintln!("{}: Encountered error '{}' while attempting to write to log file.", log_tuple.timestamp, err)
                     );
 
                 #[cfg(test)]
