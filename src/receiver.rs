@@ -51,6 +51,9 @@ const LEVEL_LABEL_WIDTH: usize = 9;
 /// Padding to the left of the log message
 const MESSAGE_LEFT_PADDING: usize = 3;
 
+/// Logfile directory location
+const LOGFILE_DIR: &str = "logs";
+
 #[cfg(test)]
 pub const STDOUT_FILENAME: &str = "logs/stdout_redirect.log";
 #[cfg(test)]
@@ -62,6 +65,7 @@ pub const FILE_OUT_FILENAME: &str = "logs/file_out_redirect.log";
 ///////////////////////////////////////////////////////////////////////////////
 
 pub struct Receiver {
+    logfile_prefix: &'static str,
     logger_rx: mpsc::Receiver<Command>,
     output_level: Level,
     output_stream: OutputStream,
@@ -76,12 +80,14 @@ pub struct Receiver {
 impl Receiver {
     /// Fully-qualified constructor
     pub fn new(
+        logfile_prefix: &'static str,
         logger_rx: mpsc::Receiver<Command>,
         output_level: Level,
         output_stream: OutputStream,
         msg_count: Arc<AtomicU64>,
     ) -> Self {
         Self {
+            logfile_prefix,
             logger_rx,
             output_level,
             output_stream,
@@ -103,14 +109,13 @@ impl Receiver {
         );
 
         // Open a logfile, creating logs directory if necessary
-        let logfile_dir = "logs";
-        //FEAT: Genericize this
         let logfile_name = format!(
-            "mt_log_{}.log",
+            "{}_{}.log",
+            self.logfile_prefix,
             start_time.format(FILE_TIMESTAMP_FORMAT)
         );
 
-        let mut path_buf = PathBuf::from(logfile_dir);
+        let mut path_buf = PathBuf::from(LOGFILE_DIR);
         if !path_buf.as_path().exists() {
             match fs::create_dir(path_buf.as_path()) {
                 Ok(()) => (),

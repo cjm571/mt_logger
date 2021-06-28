@@ -2,7 +2,8 @@
 
 `mt_logger` is a multithreaded Rust logging library focused on traceability, and ease-of-use via macros.
 
-Logs are stored in a `logs` directory, located inside the current working directory when a program is launched. The directory will be created if it does not already exist. Log file names conform to [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601), with the exception that `:` is replaced with `_` to meet Windows filename requirements.
+Logs are stored in a `logs` directory, located inside the current working directory when a program is launched. The directory will be created if it does not already exist. Log file names conform to [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601), with the exception that `:` is replaced with `_` to meet Windows file naming requirements. By default, the package name (pulled from `CARGO_PKG_NAME` environment variable) is prepended to the log file name.  
+Example: `cool_game_engine/logs/cool_game_engine_2021-06-27T22_08_38.474-0600.log`
 
 At initialization, a thread is created to receive log messages and commands from the main thread. Timestamps are set before sending in order to maintain complete traceability.
 
