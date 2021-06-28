@@ -22,7 +22,7 @@ use mt_logger::*;
 
 fn main() {
     // Initialize the mt_logger global instance
-    mt_new!(Level::Info, OutputStream::Both);
+    mt_new!(None, Level::Info, OutputStream::Both);
 
     // Send a log message that WILL be output to BOTH file and stdout
     mt_log!(Level::Info, "Message {}: an INFO message", 1);
