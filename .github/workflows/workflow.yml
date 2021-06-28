@@ -48,3 +48,6 @@ jobs:
 
     - name: Unit Tests
       run: cargo +nightly test
+
+    - name: Formatting
+      run: cargo +nightly fmt -- --check
