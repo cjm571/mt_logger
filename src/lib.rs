@@ -415,7 +415,7 @@ mod tests {
         FileOut,
     }
 
-    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{9}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
+    const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{9}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
     const STDOUT_COLOR_IDX: usize = 1;
     const STDOUT_PADDED_LEVEL_IDX: usize = 2;
     const STDOUT_PADLESS_LEVEL_IDX: usize = 3;
@@ -423,7 +423,7 @@ mod tests {
     const STDOUT_LINE_NUM_IDX: usize = 5;
 
     const FILE_OUT_HDR_REGEX_STR: &str =
-        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{9}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{9}: \[(\s*(\w*)\s*)\] (.*)\(\) line (\d*):";
     const FILE_OUT_PADDED_LEVEL_IDX: usize = 1;
     const FILE_OUT_PADLESS_LEVEL_IDX: usize = 2;
     const FILE_OUT_FN_NAME_IDX: usize = 3;
