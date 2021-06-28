@@ -387,6 +387,7 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::io::Read;
+    use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time;
 
@@ -429,9 +430,17 @@ mod tests {
     const FILE_OUT_LINE_NUM_IDX: usize = 4;
 
 
+    // Reset verification files, if they exist
     fn reset_verf_files() -> TestResult {
-        fs::write(STDOUT_FILENAME, "")?;
-        fs::write(FILE_OUT_FILENAME, "")?;
+        let path_buf = PathBuf::from(STDOUT_FILENAME);
+        if path_buf.as_path().exists() {
+            fs::write(STDOUT_FILENAME, "")?;
+        }
+        
+        let path_buf = PathBuf::from(FILE_OUT_FILENAME);
+        if path_buf.as_path().exists() {
+            fs::write(FILE_OUT_FILENAME, "")?;
+        }
 
         Ok(())
     }
