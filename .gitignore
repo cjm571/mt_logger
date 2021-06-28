@@ -3,9 +3,6 @@
 **/*.rs.bk
 Cargo.lock
 
-# Rust config files
-rustfmt.toml
-
 # Visual Studio Code
 .vscode/*
 !.vscode/tasks.json
