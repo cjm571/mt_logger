@@ -116,7 +116,11 @@ pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 
 impl MtLogger {
     /// Fully-qualified constructor
-    pub fn new(output_level: Level, output_stream: OutputStream) -> Self {
+    pub fn new(
+        logfile_prefix: &'static str,
+        output_level: Level,
+        output_stream: OutputStream,
+    ) -> Self {
         // Create the log messaging and control channel
         // Must be a sync channel in order to wrap OnceCell around an MtLogger
         let (logger_tx, logger_rx) = mpsc::sync_channel::<Command>(CHANNEL_SIZE);
@@ -126,6 +130,7 @@ impl MtLogger {
 
         // Initialize receiver struct, build and spawn thread
         let mut log_receiver = Receiver::new(
+            logfile_prefix,
             logger_rx,
             output_level,
             output_stream,
@@ -208,6 +213,16 @@ impl MtLogger {
 
 
 ///////////////////////////////////////////////////////////////////////////////
+//  Static Functions
+///////////////////////////////////////////////////////////////////////////////
+
+// Wrapper around chrono::Local::now() to avoid dependency issues with using external crate functions in macros
+pub fn mt_now() -> DateTime<Local> {
+    Local::now()
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
 //  Trait Implementations
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -282,8 +297,14 @@ impl From<RecvError> for MtLoggerError {
 
 #[macro_export]
 macro_rules! mt_new {
-    ($output_level:expr, $output_stream:expr) => {{
-        let logger = $crate::MtLogger::new($output_level, $output_stream);
+    ($logfile_prefix:expr, $output_level:expr, $output_stream:expr) => {{
+        // Use prefix if specified, or default to parent package name
+        let prefix = match $logfile_prefix {
+            Some(specified_prefix) => specified_prefix,
+            None => env!("CARGO_PKG_NAME"),
+        };
+
+        let logger = $crate::MtLogger::new(prefix, $output_level, $output_stream);
 
         $crate::INSTANCE
             .set(logger)
@@ -295,7 +316,7 @@ macro_rules! mt_new {
 macro_rules! mt_log {
     ($log_level:expr, $( $fmt_args:expr ),*) => {{
         // Take the timestamp first for highest accuracy
-        let timestamp = Local::now();
+        let timestamp = $crate::mt_now();
 
         // Capture fully-qualified function name
         let fn_name = {
@@ -391,8 +412,6 @@ mod tests {
     use std::sync::Mutex;
     use std::time;
 
-    use chrono::Local;
-
     use lazy_static::lazy_static;
 
     use regex::Regex;
@@ -414,6 +433,8 @@ mod tests {
         StdOut,
         FileOut,
     }
+
+    const LOGFILE_PREFIX: Option<&'static str> = Some("TEST");
 
     const STDOUT_HDR_REGEX_STR: &str = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{9}: \x1b\[(\d{3};\d{3}m)\[(\s*(\w*)\s*)\]\x1b\[0m (.*)\(\) line (\d*):";
     const STDOUT_COLOR_IDX: usize = 1;
@@ -587,7 +608,7 @@ mod tests {
 
         // Create or update logger instance such that all messages are logged to Both outputs
         if INSTANCE.get().is_none() {
-            mt_new!(Level::Trace, OutputStream::Both);
+            mt_new!(LOGFILE_PREFIX, Level::Trace, OutputStream::Both);
         } else {
             mt_level!(Level::Trace);
             mt_stream!(OutputStream::Both);
@@ -738,7 +759,7 @@ mod tests {
 
         // Create or update logger instance such that all messages are logged to Both outputs
         if INSTANCE.get().is_none() {
-            mt_new!(Level::Trace, OutputStream::Both);
+            mt_new!(LOGFILE_PREFIX, Level::Trace, OutputStream::Both);
         } else {
             mt_level!(Level::Trace);
             mt_stream!(OutputStream::Both);
@@ -796,7 +817,7 @@ mod tests {
 
         // Set up the logger instance
         if INSTANCE.get().is_none() {
-            mt_new!(Level::Info, OutputStream::StdOut);
+            mt_new!(LOGFILE_PREFIX, Level::Info, OutputStream::StdOut);
         } else {
             mt_level!(Level::Info);
             mt_stream!(OutputStream::StdOut);
