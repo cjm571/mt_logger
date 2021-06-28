@@ -436,7 +436,7 @@ mod tests {
         if path_buf.as_path().exists() {
             fs::write(STDOUT_FILENAME, "")?;
         }
-        
+
         let path_buf = PathBuf::from(FILE_OUT_FILENAME);
         if path_buf.as_path().exists() {
             fs::write(FILE_OUT_FILENAME, "")?;
