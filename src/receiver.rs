@@ -36,11 +36,14 @@ use crate::{Command, Level, MsgTuple, OutputStream};
 //  Named Constants
 ///////////////////////////////////////////////////////////////////////////////
 
+/// Format string for logfile names. Conforms to ISO 8601, except : has been replaced with _ to make Windows happy.
+const FILE_TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H_%M_%S%.3f%z";
+
 /// Format string for timestamps
 #[cfg(not(test))]
-const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %T%.9f";
+const ENTRY_TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%T%.9f";
 #[cfg(test)]
-pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %T%.9f";
+pub const ENTRY_TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%T%.9f";
 
 /// Padding required to align text after Level label
 const LEVEL_LABEL_WIDTH: usize = 9;
@@ -96,7 +99,7 @@ impl Receiver {
         let start_time = Local::now();
         println!(
             "{}: Entered LogReceiver thread.",
-            start_time.format(TIMESTAMP_FORMAT)
+            start_time.format(ENTRY_TIMESTAMP_FORMAT)
         );
 
         // Open a logfile, creating logs directory if necessary
@@ -104,7 +107,7 @@ impl Receiver {
         //FEAT: Genericize this
         let logfile_name = format!(
             "mt_log_{}.log",
-            start_time.format("%F_%H_%M_%S%.3f")
+            start_time.format(FILE_TIMESTAMP_FORMAT)
         );
 
         let mut path_buf = PathBuf::from(logfile_dir);
@@ -192,7 +195,7 @@ impl Receiver {
 
     fn record_msg(&mut self, logfile: &mut File, log_tuple: MsgTuple) {
         // Format the timestamp for recording
-        let formatted_timestamp = log_tuple.timestamp.format(TIMESTAMP_FORMAT);
+        let formatted_timestamp = log_tuple.timestamp.format(ENTRY_TIMESTAMP_FORMAT);
 
         if log_tuple.level >= self.output_level {
             // Console output
