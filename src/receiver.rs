@@ -157,9 +157,7 @@ impl Receiver {
                 // Handle command based on type
                 match logger_cmd {
                     /* Messages */
-                    Command::LogMsg(log_tuple) => {
-                        self.record_msg(&mut logfile, log_tuple)
-                    }
+                    Command::LogMsg(log_tuple) => self.record_msg(&mut logfile, log_tuple),
 
                     /* Configuration Commands */
                     Command::SetOutputLevel(output_level) => {
@@ -182,7 +180,10 @@ impl Receiver {
                                 level: Level::Error,
                                 fn_name: "LOG_RECEIVER_FLUSH_COMMAND".to_string(),
                                 line: line!(),
-                                msg: format!("Encountered SendError '{}' when sending flush ACK message.", e),
+                                msg: format!(
+                                    "Encountered SendError '{}' when sending flush ACK message.",
+                                    e
+                                ),
                             };
 
                             self.record_msg(&mut logfile, err_tuple);
@@ -259,10 +260,14 @@ impl Receiver {
                 );
 
                 //FEAT: Avoid spewing the same error if a file explodes or something
-                logfile.write_all(msg_formatted.as_bytes())
-                    .unwrap_or_else(
-                        |err| eprintln!("{}: Encountered error '{}' while attempting to write to log file.", log_tuple.timestamp, err)
-                    );
+                logfile
+                    .write_all(msg_formatted.as_bytes())
+                    .unwrap_or_else(|err| {
+                        eprintln!(
+                            "{}: Encountered error '{}' while attempting to write to log file.",
+                            log_tuple.timestamp, err
+                        )
+                    });
 
                 #[cfg(test)]
                 {
