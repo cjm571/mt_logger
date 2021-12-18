@@ -22,6 +22,9 @@ Purpose:
 
 \* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+#![warn(missing_docs)]
+#![cfg_attr(not(doctest), doc = include_str!("../README.md"))]
+
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,8 +49,11 @@ const CHANNEL_SIZE: usize = 512;
 //  Module Declarations
 ///////////////////////////////////////////////////////////////////////////////
 
+#[doc(hidden)]
 pub mod sender;
 use self::sender::Sender;
+
+#[doc(hidden)]
 pub mod receiver;
 use self::receiver::Receiver;
 
@@ -59,14 +65,21 @@ use self::receiver::Receiver;
 /// Denotes the level or severity of the log message.
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum Level {
+    /// For tracing code paths. Mean to be very verbose.
     Trace = 0x01,
+    /// For debugging and troubleshooting
     Debug = 0x02,
+    /// For harmless but useful information
     Info = 0x04,
+    /// For cosmetic/recoverable errors
     Warning = 0x08,
+    /// For Major/unrecoverable errors
     Error = 0x10,
+    /// For Very Bad News™
     Fatal = 0x20,
 }
 
+#[doc(hidden)]
 /// Tuple struct containing log message and its log level
 pub struct MsgTuple {
     pub timestamp: DateTime<Local>,
@@ -76,14 +89,21 @@ pub struct MsgTuple {
     pub msg: String,
 }
 
+/// Specifies which stream(s) log messages should be written to.
 #[derive(Debug, Copy, Clone)]
 pub enum OutputStream {
+    /// Don't write to either stream, i.e., disable logging
     Neither = 0x0,
+    /// Write only to StdOut
     StdOut = 0x1,
+    /// Write only to a file
     File = 0x2,
+    /// Write to both StdOut and a File
     Both = 0x3,
 }
 
+#[doc(hidden)]
+/// Enumeration of commands that the logging thread will handle
 pub enum Command {
     LogMsg(MsgTuple),
     SetOutputLevel(Level),
@@ -91,6 +111,7 @@ pub enum Command {
     Flush(mpsc::Sender<()>),
 }
 
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct MtLogger {
     enabled: bool,
@@ -98,15 +119,20 @@ pub struct MtLogger {
     msg_count: Arc<AtomicU64>,
 }
 
+/// Logging errors
 #[derive(Debug)]
 pub enum MtLoggerError {
+    /// A logging command was attempted before the global logger instance was initialized with [`mt_new!`]
     LoggerNotInitialized,
 
-    // Wrappers
+    /* Wrappers */
+    /// Wrapper for `SendError<>`
     SendError(SendError<Command>),
+    /// Wrapper for `RecvError`
     RecvError(RecvError),
 }
 
+#[doc(hidden)]
 pub static INSTANCE: OnceCell<MtLogger> = OnceCell::new();
 
 
@@ -156,6 +182,7 @@ impl MtLogger {
      *  Accessor Methods  *
     \*  *  *  *  *  *  *  */
 
+    #[doc(hidden)]
     pub fn msg_count(&self) -> u64 {
         self.msg_count.load(Ordering::SeqCst)
     }
@@ -165,6 +192,7 @@ impl MtLogger {
      *   Utility Methods  *
     \*  *  *  *  *  *  *  */
 
+    #[doc(hidden)]
     //FEAT: Bring filtering back to the sending-side
     pub fn log_msg(
         &self,
@@ -189,6 +217,7 @@ impl MtLogger {
         }
     }
 
+    #[doc(hidden)]
     pub fn log_cmd(&self, cmd: Command) -> Result<(), SendError<Command>> {
         if self.enabled {
             self.sender.send_cmd(cmd)
@@ -197,6 +226,7 @@ impl MtLogger {
         }
     }
 
+    #[doc(hidden)]
     pub fn flush(&self) -> Result<(), MtLoggerError> {
         // Create a channel that will be used to notify completion of the flush
         let (flush_ack_tx, flush_ack_rx) = mpsc::channel::<()>();
@@ -216,6 +246,7 @@ impl MtLogger {
 //  Static Functions
 ///////////////////////////////////////////////////////////////////////////////
 
+#[doc(hidden)]
 // Wrapper around chrono::Local::now() to avoid dependency issues with using external crate functions in macros
 pub fn mt_now() -> DateTime<Local> {
     Local::now()
@@ -295,6 +326,29 @@ impl From<RecvError> for MtLoggerError {
 //  Macro Definitions
 ///////////////////////////////////////////////////////////////////////////////
 
+/// Initializes the `mt_logger` global instance.
+///
+/// # Examples
+///
+/// Initialize the logger instance to log `Info`-level messages and higher to _both_ StdOut and a file.
+/// The filename will be given the default prefix, see module-level documentation for full format.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::{Level, OutputStream};
+/// # fn main() {
+/// mt_new!(None, Level::Info, OutputStream::Both);
+/// # }
+/// ```
+///
+/// Initialize the logger instance to log `Trace`-level messages and higher to a file _only_.
+/// The filename will be given the specified prefix.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::{Level, OutputStream};
+/// # fn main() {
+/// mt_new!(Some("my_app_v2.3"), Level::Trace, OutputStream::File);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! mt_new {
     ($logfile_prefix:expr, $output_level:expr, $output_stream:expr) => {{
@@ -312,6 +366,27 @@ macro_rules! mt_new {
     }};
 }
 
+/// Sends a message to be logged at the specified logging level.
+///
+/// Arguments after `$log_level` follow the format of [`println!`] arguments.
+///
+/// # Note
+/// A call to this macro will only _send_ the message to the logging thread.
+/// It does NOT guarantee that the message will be delivered at any time.
+///
+/// If all messages must be logged at a given time, see [`mt_flush!`].
+///
+/// # Examples
+///
+/// Logs a `Debug`-level message with the content, "No response received after 500ms".
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::Level;
+/// # fn main() {
+/// let timeout = 500;
+/// mt_log!(Level::Debug, "No response received after {}ms", timeout);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! mt_log {
     ($log_level:expr, $( $fmt_args:expr ),*) => {{
@@ -344,6 +419,27 @@ macro_rules! mt_log {
     }};
 }
 
+/// Sets the active stream to the specified [`OutputStream`].
+///
+/// # Examples
+///
+/// Set active stream to `StdOut`.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::OutputStream;
+/// # fn main() {
+/// mt_stream!(OutputStream::StdOut);
+/// # }
+/// ```
+///
+/// Set active stream to `Neither`, i.e., disable logging.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::OutputStream;
+/// # fn main() {
+/// mt_stream!(OutputStream::Neither);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! mt_stream {
     ($output_stream:expr) => {{
@@ -359,6 +455,27 @@ macro_rules! mt_stream {
     }};
 }
 
+/// Sets the minimum logging level to the specified [`Level`].
+///
+/// # Examples
+///
+/// Log all messages at `Debug`-level or higher.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::Level;
+/// # fn main() {
+/// mt_level!(Level::Debug);
+/// # }
+/// ```
+///
+/// Log all messages at `Fatal`-level or higher, i.e., only log `Fatal`-level messages.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::Level;
+/// # fn main() {
+/// mt_level!(Level::Fatal);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! mt_level {
     ($output_level:expr) => {{
@@ -374,6 +491,27 @@ macro_rules! mt_level {
     }};
 }
 
+/// Returns a count of _recorded_ log messages.
+///
+/// NOTE: This may not (and likely _is_ not, at any given time), the same as the
+/// number of times [`mt_log!`] has been called. The message count is only incremented
+/// after the logging thread has successfully written a message to the active
+/// stream(s). Due to the nature of multithreading, this may happen at any time or never.
+///
+/// If a count of all successfully sent and recorded messages is required, [`mt_flush!`]
+/// must be called before [`mt_count!`].
+///
+/// # Examples
+///
+/// Get count of recorded messages.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::{Level, OutputStream};
+/// # fn main() {
+/// # mt_new!(None, Level::Info, OutputStream::Both);
+/// let msg_count = mt_count!();
+/// # }
+/// ```
 #[macro_export]
 macro_rules! mt_count {
     () => {{
@@ -386,6 +524,40 @@ macro_rules! mt_count {
     }};
 }
 
+/// Blocks the calling thread until all messages have been received by the logging thread.
+///
+/// Returns [`Result<(), MtLoggerError>`]
+///
+/// # Examples
+///
+/// Flush all sent messages.
+/// ```
+/// # #[macro_use] extern crate mt_logger;
+/// # use mt_logger::{Level, MtLoggerError, OutputStream};
+/// # fn main() -> Result<(), MtLoggerError> {
+
+/// # mt_new!(None, Level::Info, OutputStream::Both);/// mt_log!(Level::Debug, "These");
+/// mt_log!(Level::Debug, "messages");
+/// mt_log!(Level::Debug, "may");
+/// mt_log!(Level::Debug, "not");
+/// mt_log!(Level::Debug, "have");
+/// mt_log!(Level::Debug, "been");
+/// mt_log!(Level::Debug, "received");
+/// mt_log!(Level::Debug, "yet.");
+///
+/// mt_flush!()?;
+/// // Now they have!
+///
+/// Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// As this function is effectively a send and blocking receive, it is possible for
+/// either of these calls to fail, and those errors will propagate back to the caller.
+///
+/// See [`MtLoggerError`] for an enumeration of errors that may be returned.
 #[macro_export]
 macro_rules! mt_flush {
     () => {

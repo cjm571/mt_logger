@@ -25,7 +25,6 @@ use std::sync::mpsc;
 
 use crate::Command;
 
-
 ///////////////////////////////////////////////////////////////////////////////
 //  Data Structures
 ///////////////////////////////////////////////////////////////////////////////
@@ -34,7 +33,6 @@ use crate::Command;
 pub struct Sender {
     logger_tx: mpsc::SyncSender<Command>,
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Object Implementation
@@ -45,7 +43,6 @@ impl Sender {
     pub fn new(logger_tx: mpsc::SyncSender<Command>) -> Self {
         Self { logger_tx }
     }
-
 
     /*  *  *  *  *  *  *  *\
      *  Utility Methods   *
